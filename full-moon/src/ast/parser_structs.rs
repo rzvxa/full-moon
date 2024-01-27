@@ -1,30 +1,23 @@
 use std::borrow::Cow;
 
-use crate::tokenizer::{Lexer, LexerResult, Symbol, TokenKind, TokenReference};
+use crate::{
+    tokenizer::{Lexer, LexerResult, Symbol, TokenKind, TokenReference},
+    Language,
+};
 
-use super::{parsers::parse_block, Ast, Block, LuaVersion};
+use super::{parsers::parse_block, Ast, Block};
 
-pub struct ParserState {
+pub struct ParserState<L: Language> {
     errors: Vec<crate::Error>,
-    lexer: Lexer,
-    // Unused with no features enabled
-    #[allow(unused)]
-    lua_version: LuaVersion,
+    lexer: L::Lex,
 }
 
-impl ParserState {
-    pub fn new(lexer: Lexer) -> Self {
+impl<L: Language> ParserState<L> {
+    pub fn new(lexer: L::Lex) -> Self {
         Self {
             errors: Vec::new(),
-            lua_version: lexer.lua_version,
             lexer,
         }
-    }
-
-    // Unused with no features enabled
-    #[allow(unused)]
-    pub fn lua_version(&self) -> LuaVersion {
-        self.lua_version
     }
 
     pub fn current(&self) -> Result<&TokenReference, ()> {
@@ -266,11 +259,11 @@ impl AstResult {
         &self.errors
     }
 
-    pub(crate) fn parse_fallible(code: &str, lua_version: LuaVersion) -> Self {
+    pub(crate) fn parse_fallible<L: Language>(code: &str) -> Self {
         const UNEXPECTED_TOKEN_ERROR: &str = "unexpected token, this needs to be a statement";
 
-        let lexer = Lexer::new(code, lua_version);
-        let mut parser_state = ParserState::new(lexer);
+        let lexer: L::Lex = L::Lex::new(code);
+        let mut parser_state = ParserState::<L>::new(lexer);
 
         let mut block = match parse_block(&mut parser_state) {
             ParserResult::Value(block) => block,

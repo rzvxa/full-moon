@@ -19,11 +19,14 @@ pub mod tokenizer;
 /// Used to create visitors that recurse through [`Ast`](ast::Ast) nodes.
 pub mod visitors;
 
+pub mod language;
+
 mod private;
 mod short_string;
 mod util;
 
-pub use ast::LuaVersion;
+pub use language::Language;
+// pub use ast::LuaVersion;
 pub use short_string::ShortString;
 use tokenizer::Position;
 
@@ -89,8 +92,8 @@ impl std::error::Error for Error {}
 /// assert!(full_moon::parse("local x = ").is_err());
 /// ```
 #[allow(clippy::result_large_err)]
-pub fn parse(code: &str) -> Result<ast::Ast, Vec<Error>> {
-    parse_fallible(code, LuaVersion::new()).into_result()
+pub fn parse<L: Language>(code: &str) -> Result<ast::Ast, Vec<Error>> {
+    parse_fallible::<L>(code).into_result()
 }
 
 /// Given code and a pinned Lua version, will produce an [`ast::AstResult`].
@@ -105,8 +108,8 @@ pub fn parse(code: &str) -> Result<ast::Ast, Vec<Error>> {
 /// [`LocalAssignment`](ast::LocalAssignment) that would print to `local x =`.
 /// 3. There are no stability guarantees for partial Ast results, but they are consistent
 /// within the same exact version of full-moon.
-pub fn parse_fallible(code: &str, lua_version: LuaVersion) -> ast::AstResult {
-    ast::AstResult::parse_fallible(code, lua_version)
+pub fn parse_fallible<L: Language>(code: &str) -> ast::AstResult {
+    ast::AstResult::parse_fallible::<L>(code)
 }
 
 /// Prints back Lua code from an [`Ast`](ast::Ast)

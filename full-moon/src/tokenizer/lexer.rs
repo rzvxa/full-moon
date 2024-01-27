@@ -1,4 +1,4 @@
-use crate::{ast::LuaVersion, tokenizer::StringLiteralQuoteType, version_switch, ShortString};
+use crate::{tokenizer::StringLiteralQuoteType, version_switch, ShortString};
 
 use super::{
     Position, Symbol, Token, TokenReference, TokenType, TokenizerError, TokenizerErrorType,
@@ -7,10 +7,34 @@ use super::{
 #[cfg(feature = "luau")]
 use super::{interpolated_strings, InterpolatedStringKind};
 
+pub trait Lexer {
+    /// Creates a new Lexer from the given source string.
+    fn new(source: &str) -> Self;
+
+    /// Creates a new Lexer from the given source string and Lua version(s), but does not process
+    /// the first token.
+    fn new_lazy(source: &str) -> Self;
+
+    /// Returns the current token.
+    fn current(&self) -> Option<&LexerResult<TokenReference>>;
+
+    /// Returns the next token.
+    fn peek(&self) -> Option<&LexerResult<TokenReference>>;
+
+    /// Consumes the current token and returns the next token.
+    fn consume(&mut self) -> Option<LexerResult<TokenReference>>;
+
+    /// Returns a vector of all tokens left in the source string.
+    fn collect(self) -> LexerResult<Vec<Token>>;
+
+    /// Processes and returns the next token in the source string, ignoring trivia.
+    fn process_next(&mut self) -> Option<LexerResult<Token>>;
+}
+
 /// A lexer, which will produce a stream of tokens from a source string.
 /// If you just want to create an [`Ast`](crate::ast::Ast) from a string, you want to use
 /// [`parse`](crate::parse) instead.
-pub struct Lexer {
+pub struct SuperLexer {
     pub(crate) source: LexerSource,
     sent_eof: bool,
 
@@ -19,86 +43,9 @@ pub struct Lexer {
 
     #[cfg(feature = "luau")]
     pub(crate) brace_stack: Vec<interpolated_strings::BraceType>,
-
-    /// The Lua version(s) to parse for.
-    pub lua_version: LuaVersion,
 }
 
-impl Lexer {
-    /// Creates a new Lexer from the given source string and Lua version(s).
-    pub fn new(source: &str, lua_version: LuaVersion) -> Self {
-        let mut lexer = Self::new_lazy(source, lua_version);
-
-        lexer.next_token = lexer.process_first_with_trivia();
-        lexer.peek_token = lexer.process_next_with_trivia();
-
-        lexer
-    }
-
-    /// Creates a new Lexer from the given source string and Lua version(s), but does not process
-    /// the first token.
-    pub fn new_lazy(source: &str, lua_version: LuaVersion) -> Self {
-        Self {
-            source: LexerSource::new(source),
-            sent_eof: false,
-
-            next_token: None,
-            peek_token: None,
-
-            #[cfg(feature = "luau")]
-            brace_stack: Vec::new(),
-
-            lua_version,
-        }
-    }
-
-    /// Returns the current token.
-    pub fn current(&self) -> Option<&LexerResult<TokenReference>> {
-        self.next_token.as_ref()
-    }
-
-    /// Returns the next token.
-    pub fn peek(&self) -> Option<&LexerResult<TokenReference>> {
-        self.peek_token.as_ref()
-    }
-
-    /// Consumes the current token and returns the next token.
-    pub fn consume(&mut self) -> Option<LexerResult<TokenReference>> {
-        let next = self.next_token.take()?;
-        self.next_token = self.peek_token.take();
-        self.peek_token = self.process_next_with_trivia();
-        Some(next)
-    }
-
-    /// Returns a vector of all tokens left in the source string.
-    pub fn collect(self) -> LexerResult<Vec<Token>> {
-        let mut tokens = Vec::new();
-        let mut lexer = self;
-        let mut errors = Vec::new();
-
-        while let Some(token_reference) = lexer.consume() {
-            let mut token_reference = match token_reference {
-                LexerResult::Ok(token_reference) => token_reference,
-
-                LexerResult::Recovered(token_reference, mut new_errors) => {
-                    errors.append(&mut new_errors);
-                    token_reference
-                }
-
-                LexerResult::Fatal(mut new_errors) => {
-                    errors.append(&mut new_errors);
-                    continue;
-                }
-            };
-
-            tokens.append(&mut token_reference.leading_trivia);
-            tokens.push(token_reference.token);
-            tokens.append(&mut token_reference.trailing_trivia);
-        }
-
-        LexerResult::new(tokens, errors)
-    }
-
+impl SuperLexer {
     fn create(
         &self,
         start_position: Position,
@@ -247,8 +194,451 @@ impl Lexer {
         trailing_trivia
     }
 
+    fn read_number(
+        &mut self,
+        start_position: Position,
+        mut number: String,
+    ) -> Option<LexerResult<Token>> {
+        let mut hit_decimal = false;
+
+        while let Some(next) = self.source.current() {
+            if next.is_ascii_digit() || (self.lua_version.has_luau() && matches!(next, '_')) {
+                number.push(self.source.next().expect("peeked, but no next"));
+            } else if matches!(next, '.') {
+                if hit_decimal {
+                    return Some(self.eat_invalid_number(start_position, number));
+                }
+
+                hit_decimal = true;
+                number.push(self.source.next().expect("peeked, but no next"));
+            } else if matches!(next, 'e' | 'E') {
+                return self.read_exponent_part(start_position, number);
+            } else {
+                break;
+            }
+        }
+
+        self.create(
+            start_position,
+            TokenType::Number {
+                text: ShortString::from(number),
+            },
+        )
+    }
+
+    fn eat_invalid_number(
+        &mut self,
+        start_position: Position,
+        mut number: String,
+    ) -> LexerResult<Token> {
+        loop {
+            if matches!(self.source.current(), Some(token) if token.is_ascii_whitespace())
+                || self.source.current().is_none()
+            {
+                return LexerResult::new(
+                    Token {
+                        token_type: TokenType::Number {
+                            text: number.into(),
+                        },
+                        start_position,
+                        end_position: self.source.position(),
+                    },
+                    vec![TokenizerError {
+                        error: TokenizerErrorType::InvalidNumber,
+                        range: (start_position, self.source.position()),
+                    }],
+                );
+            }
+
+            number.push(self.source.next().expect("peeked, but no next"));
+        }
+    }
+
+    // Starts from the exponent marker (like 'e')
+    fn read_exponent_part(
+        &mut self,
+        start_position: Position,
+        mut number: String,
+    ) -> Option<LexerResult<Token>> {
+        number.push(self.source.next().expect("peeked, but no next"));
+
+        let next = self.source.current();
+        if matches!(next, Some('+') | Some('-')) {
+            number.push(self.source.next().expect("peeked, but no next"));
+        }
+
+        if !matches!(self.source.current(), Some('0'..='9')) {
+            return Some(self.eat_invalid_number(start_position, number));
+        }
+
+        while let Some(next) = self.source.current() {
+            if next.is_ascii_digit() || (self.lua_version.has_luau() && matches!(next, '_')) {
+                number.push(self.source.next().expect("peeked, but no next"));
+            } else {
+                break;
+            }
+        }
+
+        self.create(
+            start_position,
+            TokenType::Number {
+                text: ShortString::from(number),
+            },
+        )
+    }
+
+    fn read_hex_number(
+        &mut self,
+        hex_character: char,
+        start_position: Position,
+    ) -> Option<LexerResult<Token>> {
+        let mut number = String::from_iter(['0', hex_character]);
+        let mut hit_decimal = false;
+
+        while let Some(next) = self.source.current() {
+            match next {
+                '0'..='9' | 'a'..='f' | 'A'..='F' => {
+                    number.push(self.source.next().expect("peeked, but no next"));
+                }
+
+                '_' if self.lua_version.has_luau() => {
+                    number.push(self.source.next().expect("peeked, but no next"));
+                }
+
+                '.' if self.lua_version.has_lua52() => {
+                    if hit_decimal {
+                        return Some(self.eat_invalid_number(start_position, number));
+                    }
+
+                    hit_decimal = true;
+                    number.push(self.source.next().expect("peeked, but no next"));
+                }
+
+                'p' | 'P' if self.lua_version.has_lua52() => {
+                    if number.len() == 2 {
+                        return Some(self.eat_invalid_number(start_position, number));
+                    }
+
+                    return self.read_exponent_part(start_position, number);
+                }
+
+                _ => break,
+            }
+        }
+
+        if number.len() == 2 {
+            return Some(self.eat_invalid_number(start_position, number));
+        }
+
+        self.create(
+            start_position,
+            TokenType::Number {
+                text: ShortString::from(number),
+            },
+        )
+    }
+
+    fn read_binary_number(
+        &mut self,
+        binary_character: char,
+        start_position: Position,
+    ) -> Option<LexerResult<Token>> {
+        debug_assert!(self.lua_version.has_luau());
+
+        let mut number = String::from_iter(['0', binary_character]);
+
+        while let Some(next) = self.source.current() {
+            match next {
+                '0' | '1' | '_' => {
+                    number.push(self.source.next().expect("peeked, but no next"));
+                }
+
+                _ => break,
+            }
+        }
+
+        if number.len() == 2 {
+            return Some(self.eat_invalid_number(start_position, number));
+        }
+
+        self.create(
+            start_position,
+            TokenType::Number {
+                text: ShortString::from(number),
+            },
+        )
+    }
+
+    // (string, had to be recovered?)
+    fn read_string(&mut self, quote: char) -> (TokenType, bool) {
+        let quote_type = match quote {
+            '"' => StringLiteralQuoteType::Double,
+            '\'' => StringLiteralQuoteType::Single,
+            _ => unreachable!(),
+        };
+
+        let mut literal = String::new();
+
+        let mut escape = false;
+        let mut z_escaped = false;
+
+        loop {
+            let next = match self.source.next() {
+                Some(next) => next,
+                None => {
+                    return (
+                        TokenType::StringLiteral {
+                            literal: literal.into(),
+                            multi_line_depth: 0,
+                            quote_type,
+                        },
+                        true,
+                    )
+                }
+            };
+
+            match (escape, next) {
+                (true, 'z') if self.lua_version.has_lua52() || self.lua_version.has_luau() => {
+                    escape = false;
+                    z_escaped = true;
+                    literal.push('z');
+                }
+
+                (true, ..) => {
+                    escape = false;
+
+                    if self.lua_version.has_lua52() || self.lua_version.has_luau() {
+                        z_escaped = true; // support for '\' followed by a new line
+                    }
+
+                    literal.push(next);
+                }
+
+                (false, '\\') => {
+                    escape = true;
+                    literal.push('\\');
+                }
+
+                (false, '\n' | '\r') if z_escaped => {
+                    z_escaped = false;
+                    literal.push(next);
+                }
+
+                (false, '\n' | '\r') => {
+                    return (
+                        TokenType::StringLiteral {
+                            literal: literal.into(),
+                            multi_line_depth: 0,
+                            quote_type,
+                        },
+                        true,
+                    )
+                }
+
+                (false, ..) if next == quote => {
+                    return (
+                        TokenType::StringLiteral {
+                            literal: literal.into(),
+                            multi_line_depth: 0,
+                            quote_type,
+                        },
+                        false,
+                    );
+                }
+
+                (false, ..) => {
+                    literal.push(next);
+                }
+            }
+        }
+    }
+
+    // (comment, had to be recovered?)
+    fn read_comment(&mut self) -> (TokenType, bool) {
+        let mut comment = String::new();
+
+        if self.source.consume('[') {
+            match self.read_multi_line_body() {
+                MultiLineBodyResult::Ok { blocks, body } => {
+                    return (
+                        TokenType::MultiLineComment {
+                            blocks,
+                            comment: body.into(),
+                        },
+                        false,
+                    );
+                }
+
+                MultiLineBodyResult::Unclosed { blocks, body } => {
+                    return (
+                        TokenType::MultiLineComment {
+                            blocks,
+                            comment: body.into(),
+                        },
+                        true,
+                    );
+                }
+
+                MultiLineBodyResult::NotMultiLine { blocks } => {
+                    comment.push('[');
+
+                    for _ in 0..blocks {
+                        comment.push('=');
+                    }
+                }
+            }
+        }
+
+        let mut position_before_new_line = self.source.lexer_position;
+
+        while let Some(next) = self.source.next() {
+            if next == '\n' {
+                break;
+            }
+
+            comment.push(next);
+            position_before_new_line = self.source.lexer_position;
+        }
+
+        self.source.lexer_position = position_before_new_line;
+
+        (
+            TokenType::SingleLineComment {
+                comment: comment.into(),
+            },
+            false,
+        )
+    }
+
+    fn read_multi_line_body(&mut self) -> MultiLineBodyResult {
+        let mut blocks = 0;
+        while self.source.consume('=') {
+            blocks += 1;
+        }
+
+        if !self.source.consume('[') {
+            return MultiLineBodyResult::NotMultiLine { blocks };
+        }
+
+        let mut body = String::new();
+
+        'read_comment_char: loop {
+            let next = match self.source.next() {
+                Some(next) => next,
+                None => return MultiLineBodyResult::Unclosed { blocks, body },
+            };
+
+            if next == ']' {
+                let mut equal_signs = 0;
+
+                while equal_signs < blocks {
+                    if !self.source.consume('=') {
+                        body.push(']');
+
+                        for _ in 0..equal_signs {
+                            body.push('=');
+                        }
+
+                        continue 'read_comment_char;
+                    }
+
+                    equal_signs += 1;
+                }
+
+                if self.source.consume(']') {
+                    break;
+                }
+
+                body.push(']');
+                for _ in 0..equal_signs {
+                    body.push('=');
+                }
+
+                continue;
+            }
+
+            body.push(next);
+        }
+
+        MultiLineBodyResult::Ok { blocks, body }
+    }
+}
+
+impl Lexer for SuperLexer {
+    /// Creates a new Lexer from the given source string and Lua version(s).
+    fn new(source: &str) -> Self {
+        let mut lexer = Self::new_lazy(source);
+
+        lexer.next_token = lexer.process_first_with_trivia();
+        lexer.peek_token = lexer.process_next_with_trivia();
+
+        lexer
+    }
+
+    /// Creates a new Lexer from the given source string and Lua version(s), but does not process
+    /// the first token.
+    fn new_lazy(source: &str) -> Self {
+        Self {
+            source: LexerSource::new(source),
+            sent_eof: false,
+
+            next_token: None,
+            peek_token: None,
+
+            #[cfg(feature = "luau")]
+            brace_stack: Vec::new(),
+        }
+    }
+
+    /// Returns the current token.
+    fn current(&self) -> Option<&LexerResult<TokenReference>> {
+        self.next_token.as_ref()
+    }
+
+    /// Returns the next token.
+    fn peek(&self) -> Option<&LexerResult<TokenReference>> {
+        self.peek_token.as_ref()
+    }
+
+    /// Consumes the current token and returns the next token.
+    fn consume(&mut self) -> Option<LexerResult<TokenReference>> {
+        let next = self.next_token.take()?;
+        self.next_token = self.peek_token.take();
+        self.peek_token = self.process_next_with_trivia();
+        Some(next)
+    }
+
+    /// Returns a vector of all tokens left in the source string.
+    fn collect(self) -> LexerResult<Vec<Token>> {
+        let mut tokens = Vec::new();
+        let mut lexer = self;
+        let mut errors = Vec::new();
+
+        while let Some(token_reference) = lexer.consume() {
+            let mut token_reference = match token_reference {
+                LexerResult::Ok(token_reference) => token_reference,
+
+                LexerResult::Recovered(token_reference, mut new_errors) => {
+                    errors.append(&mut new_errors);
+                    token_reference
+                }
+
+                LexerResult::Fatal(mut new_errors) => {
+                    errors.append(&mut new_errors);
+                    continue;
+                }
+            };
+
+            tokens.append(&mut token_reference.leading_trivia);
+            tokens.push(token_reference.token);
+            tokens.append(&mut token_reference.trailing_trivia);
+        }
+
+        LexerResult::new(tokens, errors)
+    }
+
     /// Processes and returns the next token in the source string, ignoring trivia.
-    pub fn process_next(&mut self) -> Option<LexerResult<Token>> {
+    fn process_next(&mut self) -> Option<LexerResult<Token>> {
         let start_position = self.source.position();
 
         let Some(next) = self.source.next() else {
@@ -275,7 +665,7 @@ impl Lexer {
 
                 self.create(
                     start_position,
-                    if let Some(symbol) = Symbol::from_str(&identifier, self.lua_version) {
+                    if let Some(symbol) = Symbol::from_str(&identifier) {
                         TokenType::Symbol { symbol }
                     } else {
                         TokenType::Identifier {
@@ -882,375 +1272,6 @@ impl Lexer {
                 range: (start_position, self.source.position()),
             }])),
         }
-    }
-
-    fn read_number(
-        &mut self,
-        start_position: Position,
-        mut number: String,
-    ) -> Option<LexerResult<Token>> {
-        let mut hit_decimal = false;
-
-        while let Some(next) = self.source.current() {
-            if next.is_ascii_digit() || (self.lua_version.has_luau() && matches!(next, '_')) {
-                number.push(self.source.next().expect("peeked, but no next"));
-            } else if matches!(next, '.') {
-                if hit_decimal {
-                    return Some(self.eat_invalid_number(start_position, number));
-                }
-
-                hit_decimal = true;
-                number.push(self.source.next().expect("peeked, but no next"));
-            } else if matches!(next, 'e' | 'E') {
-                return self.read_exponent_part(start_position, number);
-            } else {
-                break;
-            }
-        }
-
-        self.create(
-            start_position,
-            TokenType::Number {
-                text: ShortString::from(number),
-            },
-        )
-    }
-
-    fn eat_invalid_number(
-        &mut self,
-        start_position: Position,
-        mut number: String,
-    ) -> LexerResult<Token> {
-        loop {
-            if matches!(self.source.current(), Some(token) if token.is_ascii_whitespace())
-                || self.source.current().is_none()
-            {
-                return LexerResult::new(
-                    Token {
-                        token_type: TokenType::Number {
-                            text: number.into(),
-                        },
-                        start_position,
-                        end_position: self.source.position(),
-                    },
-                    vec![TokenizerError {
-                        error: TokenizerErrorType::InvalidNumber,
-                        range: (start_position, self.source.position()),
-                    }],
-                );
-            }
-
-            number.push(self.source.next().expect("peeked, but no next"));
-        }
-    }
-
-    // Starts from the exponent marker (like 'e')
-    fn read_exponent_part(
-        &mut self,
-        start_position: Position,
-        mut number: String,
-    ) -> Option<LexerResult<Token>> {
-        number.push(self.source.next().expect("peeked, but no next"));
-
-        let next = self.source.current();
-        if matches!(next, Some('+') | Some('-')) {
-            number.push(self.source.next().expect("peeked, but no next"));
-        }
-
-        if !matches!(self.source.current(), Some('0'..='9')) {
-            return Some(self.eat_invalid_number(start_position, number));
-        }
-
-        while let Some(next) = self.source.current() {
-            if next.is_ascii_digit() || (self.lua_version.has_luau() && matches!(next, '_')) {
-                number.push(self.source.next().expect("peeked, but no next"));
-            } else {
-                break;
-            }
-        }
-
-        self.create(
-            start_position,
-            TokenType::Number {
-                text: ShortString::from(number),
-            },
-        )
-    }
-
-    fn read_hex_number(
-        &mut self,
-        hex_character: char,
-        start_position: Position,
-    ) -> Option<LexerResult<Token>> {
-        let mut number = String::from_iter(['0', hex_character]);
-        let mut hit_decimal = false;
-
-        while let Some(next) = self.source.current() {
-            match next {
-                '0'..='9' | 'a'..='f' | 'A'..='F' => {
-                    number.push(self.source.next().expect("peeked, but no next"));
-                }
-
-                '_' if self.lua_version.has_luau() => {
-                    number.push(self.source.next().expect("peeked, but no next"));
-                }
-
-                '.' if self.lua_version.has_lua52() => {
-                    if hit_decimal {
-                        return Some(self.eat_invalid_number(start_position, number));
-                    }
-
-                    hit_decimal = true;
-                    number.push(self.source.next().expect("peeked, but no next"));
-                }
-
-                'p' | 'P' if self.lua_version.has_lua52() => {
-                    if number.len() == 2 {
-                        return Some(self.eat_invalid_number(start_position, number));
-                    }
-
-                    return self.read_exponent_part(start_position, number);
-                }
-
-                _ => break,
-            }
-        }
-
-        if number.len() == 2 {
-            return Some(self.eat_invalid_number(start_position, number));
-        }
-
-        self.create(
-            start_position,
-            TokenType::Number {
-                text: ShortString::from(number),
-            },
-        )
-    }
-
-    fn read_binary_number(
-        &mut self,
-        binary_character: char,
-        start_position: Position,
-    ) -> Option<LexerResult<Token>> {
-        debug_assert!(self.lua_version.has_luau());
-
-        let mut number = String::from_iter(['0', binary_character]);
-
-        while let Some(next) = self.source.current() {
-            match next {
-                '0' | '1' | '_' => {
-                    number.push(self.source.next().expect("peeked, but no next"));
-                }
-
-                _ => break,
-            }
-        }
-
-        if number.len() == 2 {
-            return Some(self.eat_invalid_number(start_position, number));
-        }
-
-        self.create(
-            start_position,
-            TokenType::Number {
-                text: ShortString::from(number),
-            },
-        )
-    }
-
-    // (string, had to be recovered?)
-    fn read_string(&mut self, quote: char) -> (TokenType, bool) {
-        let quote_type = match quote {
-            '"' => StringLiteralQuoteType::Double,
-            '\'' => StringLiteralQuoteType::Single,
-            _ => unreachable!(),
-        };
-
-        let mut literal = String::new();
-
-        let mut escape = false;
-        let mut z_escaped = false;
-
-        loop {
-            let next = match self.source.next() {
-                Some(next) => next,
-                None => {
-                    return (
-                        TokenType::StringLiteral {
-                            literal: literal.into(),
-                            multi_line_depth: 0,
-                            quote_type,
-                        },
-                        true,
-                    )
-                }
-            };
-
-            match (escape, next) {
-                (true, 'z') if self.lua_version.has_lua52() || self.lua_version.has_luau() => {
-                    escape = false;
-                    z_escaped = true;
-                    literal.push('z');
-                }
-
-                (true, ..) => {
-                    escape = false;
-
-                    if self.lua_version.has_lua52() || self.lua_version.has_luau() {
-                        z_escaped = true; // support for '\' followed by a new line
-                    }
-
-                    literal.push(next);
-                }
-
-                (false, '\\') => {
-                    escape = true;
-                    literal.push('\\');
-                }
-
-                (false, '\n' | '\r') if z_escaped => {
-                    z_escaped = false;
-                    literal.push(next);
-                }
-
-                (false, '\n' | '\r') => {
-                    return (
-                        TokenType::StringLiteral {
-                            literal: literal.into(),
-                            multi_line_depth: 0,
-                            quote_type,
-                        },
-                        true,
-                    )
-                }
-
-                (false, ..) if next == quote => {
-                    return (
-                        TokenType::StringLiteral {
-                            literal: literal.into(),
-                            multi_line_depth: 0,
-                            quote_type,
-                        },
-                        false,
-                    );
-                }
-
-                (false, ..) => {
-                    literal.push(next);
-                }
-            }
-        }
-    }
-
-    // (comment, had to be recovered?)
-    fn read_comment(&mut self) -> (TokenType, bool) {
-        let mut comment = String::new();
-
-        if self.source.consume('[') {
-            match self.read_multi_line_body() {
-                MultiLineBodyResult::Ok { blocks, body } => {
-                    return (
-                        TokenType::MultiLineComment {
-                            blocks,
-                            comment: body.into(),
-                        },
-                        false,
-                    );
-                }
-
-                MultiLineBodyResult::Unclosed { blocks, body } => {
-                    return (
-                        TokenType::MultiLineComment {
-                            blocks,
-                            comment: body.into(),
-                        },
-                        true,
-                    );
-                }
-
-                MultiLineBodyResult::NotMultiLine { blocks } => {
-                    comment.push('[');
-
-                    for _ in 0..blocks {
-                        comment.push('=');
-                    }
-                }
-            }
-        }
-
-        let mut position_before_new_line = self.source.lexer_position;
-
-        while let Some(next) = self.source.next() {
-            if next == '\n' {
-                break;
-            }
-
-            comment.push(next);
-            position_before_new_line = self.source.lexer_position;
-        }
-
-        self.source.lexer_position = position_before_new_line;
-
-        (
-            TokenType::SingleLineComment {
-                comment: comment.into(),
-            },
-            false,
-        )
-    }
-
-    fn read_multi_line_body(&mut self) -> MultiLineBodyResult {
-        let mut blocks = 0;
-        while self.source.consume('=') {
-            blocks += 1;
-        }
-
-        if !self.source.consume('[') {
-            return MultiLineBodyResult::NotMultiLine { blocks };
-        }
-
-        let mut body = String::new();
-
-        'read_comment_char: loop {
-            let next = match self.source.next() {
-                Some(next) => next,
-                None => return MultiLineBodyResult::Unclosed { blocks, body },
-            };
-
-            if next == ']' {
-                let mut equal_signs = 0;
-
-                while equal_signs < blocks {
-                    if !self.source.consume('=') {
-                        body.push(']');
-
-                        for _ in 0..equal_signs {
-                            body.push('=');
-                        }
-
-                        continue 'read_comment_char;
-                    }
-
-                    equal_signs += 1;
-                }
-
-                if self.source.consume(']') {
-                    break;
-                }
-
-                body.push(']');
-                for _ in 0..equal_signs {
-                    body.push('=');
-                }
-
-                continue;
-            }
-
-            body.push(next);
-        }
-
-        MultiLineBodyResult::Ok { blocks, body }
     }
 }
 

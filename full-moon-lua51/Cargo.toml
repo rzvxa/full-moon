@@ -1,0 +1,10 @@
+[package]
+name = "full_moon_lua51"
+version = "0.1.0"
+description = "Lua 5.1 module for full-moon parser"
+authors = ["Ali Rezvani <rzvxa@protonmail.com>", "Kampfkarren <kampfkarren@gmail.com>"]
+license = "MPL-2.0"
+edition = "2021"
+
+[dependencies]
+full_moon = { path = "../full-moon", version = "=0.19.0" }

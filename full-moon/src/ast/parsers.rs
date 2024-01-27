@@ -10,6 +10,7 @@ use super::{
 };
 use crate::{
     ast,
+    Language,
     node::Node,
     tokenizer::{Symbol, Token, TokenKind, TokenReference, TokenType},
 };
@@ -31,7 +32,7 @@ fn error_token() -> TokenReference {
     )
 }
 
-pub fn parse_block(state: &mut ParserState) -> ParserResult<ast::Block> {
+pub fn parse_block<L: Language>(state: &mut ParserState<L>) -> ParserResult<ast::Block> {
     let mut stmts = Vec::new();
 
     loop {
@@ -68,8 +69,8 @@ pub fn parse_block(state: &mut ParserState) -> ParserResult<ast::Block> {
 // Blocks in general are not very fallible. This means, for instance, not finishing `function()`
 // will result in a completely ignored function body.
 // This is an opinionated choice because I believe selene is going to produce terrible outputs if we don't.
-fn expect_block_with_end(
-    state: &mut ParserState,
+fn expect_block_with_end<L: Language>(
+    state: &mut ParserState<L>,
     name: &str,
     start_for_errors: &TokenReference,
 ) -> Result<(ast::Block, TokenReference), ()> {
@@ -99,7 +100,7 @@ fn expect_block_with_end(
         start,
         end,
     ) else {
-        return Ok((block, TokenReference::basic_symbol("end")));
+        return Ok((block, TokenReference::basic_symbol::<L>("end")));
     };
 
     Ok((block, end_token))
@@ -113,7 +114,7 @@ enum StmtVariant {
     LastStmt(ast::LastStmt),
 }
 
-fn parse_stmt(state: &mut ParserState) -> ParserResult<StmtVariant> {
+fn parse_stmt<L: Language>(state: &mut ParserState<L>) -> ParserResult<StmtVariant> {
     let Ok(current_token) = state.current() else {
         return ParserResult::NotFound;
     };
@@ -559,8 +560,8 @@ fn parse_stmt(state: &mut ParserState) -> ParserResult<StmtVariant> {
     }
 }
 
-fn parse_last_stmt(
-    state: &mut ParserState,
+fn parse_last_stmt<L: Language>(
+    state: &mut ParserState<L>,
 ) -> ParserResult<(ast::LastStmt, Option<TokenReference>)> {
     let last_stmt = match state.current() {
         Ok(token) if token.is_symbol(Symbol::Return) => {
@@ -590,7 +591,7 @@ fn parse_last_stmt(
     ParserResult::Value((last_stmt, semicolon))
 }
 
-fn expect_function_name(state: &mut ParserState) -> ParserResult<ast::FunctionName> {
+fn expect_function_name<L: Language>(state: &mut ParserState<L>) -> ParserResult<ast::FunctionName> {
     let mut names = Punctuated::new();
 
     let name = match state.current() {
@@ -653,8 +654,8 @@ fn expect_function_name(state: &mut ParserState) -> ParserResult<ast::FunctionNa
     })
 }
 
-fn expect_function_declaration(
-    state: &mut ParserState,
+fn expect_function_declaration<L: Language>(
+    state: &mut ParserState<L>,
     function_token: TokenReference,
 ) -> Result<ast::FunctionDeclaration, ()> {
     let function_name = match expect_function_name(state) {
@@ -680,7 +681,7 @@ fn expect_function_declaration(
     })
 }
 
-fn expect_for_stmt(state: &mut ParserState, for_token: TokenReference) -> Result<ast::Stmt, ()> {
+fn expect_for_stmt<L: Language>(state: &mut ParserState<L>, for_token: TokenReference) -> Result<ast::Stmt, ()> {
     let name_list = match parse_name_list(state) {
         ParserResult::Value(name_list) => name_list,
         ParserResult::NotFound => {
@@ -737,15 +738,15 @@ fn expect_for_stmt(state: &mut ParserState, for_token: TokenReference) -> Result
                 .collect(),
             in_token,
             expr_list: expressions,
-            do_token: TokenReference::basic_symbol("do"),
+            do_token: TokenReference::basic_symbol::<L>("do"),
             block: ast::Block::new(),
-            end_token: TokenReference::basic_symbol("end"),
+            end_token: TokenReference::basic_symbol::<L>("end"),
         }));
     };
 
     let (block, end) = match expect_block_with_end(state, "for loop", &do_token) {
         Ok(block) => block,
-        Err(()) => (ast::Block::new(), TokenReference::basic_symbol("end")),
+        Err(()) => (ast::Block::new(), TokenReference::basic_symbol::<L>("end")),
     };
 
     Ok(ast::Stmt::GenericFor(ast::GenericFor {
@@ -768,8 +769,8 @@ fn expect_for_stmt(state: &mut ParserState, for_token: TokenReference) -> Result
     }))
 }
 
-fn expect_numeric_for_stmt(
-    state: &mut ParserState,
+fn expect_numeric_for_stmt<L: Language>(
+    state: &mut ParserState<L>,
     for_token: TokenReference,
     index_variable: Name,
 ) -> Result<ast::NumericFor, ()> {
@@ -819,7 +820,7 @@ fn expect_numeric_for_stmt(
 
     let (block, end_token) = match expect_block_with_end(state, "numeric for loop", &do_token) {
         Ok(block) => block,
-        Err(()) => (ast::Block::new(), TokenReference::basic_symbol("end")),
+        Err(()) => (ast::Block::new(), TokenReference::basic_symbol::<L>("end")),
     };
 
     Ok(ast::NumericFor {
@@ -839,7 +840,7 @@ fn expect_numeric_for_stmt(
     })
 }
 
-fn expect_if_stmt(state: &mut ParserState, if_token: TokenReference) -> Result<ast::If, ()> {
+fn expect_if_stmt<L: Language>(state: &mut ParserState<L>, if_token: TokenReference) -> Result<ast::If, ()> {
     let condition = match parse_expression(state) {
         ParserResult::Value(condition) => condition,
         ParserResult::NotFound => {
@@ -942,10 +943,10 @@ fn expect_if_stmt(state: &mut ParserState, if_token: TokenReference) -> Result<a
         Ok(token) if token.is_symbol(Symbol::End) => state.consume().unwrap(),
         Ok(token) => {
             state.token_error(token.clone(), "expected `end` to conclude `if`");
-            TokenReference::basic_symbol("end")
+            TokenReference::basic_symbol::<L>("end")
         }
 
-        Err(()) => TokenReference::basic_symbol("end"),
+        Err(()) => TokenReference::basic_symbol::<L>("end"),
     };
 
     Ok(ast::If {
@@ -960,8 +961,8 @@ fn expect_if_stmt(state: &mut ParserState, if_token: TokenReference) -> Result<a
     })
 }
 
-fn expect_local_assignment(
-    state: &mut ParserState,
+fn expect_local_assignment<L: Language>(
+    state: &mut ParserState<L>,
     local_token: TokenReference,
 ) -> Result<ast::LocalAssignment, ()> {
     let names = match one_or_more(state, parse_name_with_attributes, Symbol::Comma) {
@@ -1026,8 +1027,8 @@ fn expect_local_assignment(
     Ok(local_assignment)
 }
 
-fn expect_expression_key(
-    state: &mut ParserState,
+fn expect_expression_key<L: Language>(
+    state: &mut ParserState<L>,
     left_bracket: TokenReference,
 ) -> Result<ast::Field, ()> {
     let expression = match parse_expression(state) {
@@ -1090,15 +1091,15 @@ fn expect_expression_key(
     })
 }
 
-fn force_table_constructor(
-    state: &mut ParserState,
+fn force_table_constructor<L: Language>(
+    state: &mut ParserState<L>,
     left_brace: TokenReference,
 ) -> ast::TableConstructor {
     let mut fields = Punctuated::new();
 
     let unfinished_table =
         |left_brace: TokenReference, fields: Punctuated<ast::Field>| ast::TableConstructor {
-            braces: ContainedSpan::new(left_brace, TokenReference::basic_symbol("}")),
+            braces: ContainedSpan::new(left_brace, TokenReference::basic_symbol::<L>("}")),
             fields,
         };
 
@@ -1204,7 +1205,7 @@ fn force_table_constructor(
 
     let right_brace = match state.require(Symbol::RightBrace, "expected `}` after last field") {
         Some(right_brace) => right_brace,
-        None => TokenReference::basic_symbol("}"),
+        None => TokenReference::basic_symbol::<L>("}"),
     };
 
     ast::TableConstructor {
@@ -1213,8 +1214,8 @@ fn force_table_constructor(
     }
 }
 
-fn expect_repeat_stmt(
-    state: &mut ParserState,
+fn expect_repeat_stmt<L: Language>(
+    state: &mut ParserState<L>,
     repeat_token: TokenReference,
 ) -> Result<ast::Stmt, ()> {
     let block = match parse_block(state) {
@@ -1256,8 +1257,8 @@ fn expect_repeat_stmt(
     }))
 }
 
-fn expect_while_stmt(
-    state: &mut ParserState,
+fn expect_while_stmt<L: Language>(
+    state: &mut ParserState<L>,
     while_token: TokenReference,
 ) -> Result<ast::While, ()> {
     let condition = match parse_expression(state) {
@@ -1317,7 +1318,7 @@ fn expect_type_declaration(
 
     let equal_token = state
         .require(Symbol::Equal, "expected `=` after type name")
-        .unwrap_or_else(|| TokenReference::basic_symbol("="));
+        .unwrap_or_else(|| TokenReference::basic_symbol::<L>("="));
 
     let ParserResult::Value(declare_as) = parse_type(state) else {
         return Err(());
@@ -1332,7 +1333,7 @@ fn expect_type_declaration(
     })
 }
 
-fn parse_prefix(state: &mut ParserState) -> ParserResult<ast::Prefix> {
+fn parse_prefix<L: Language>(state: &mut ParserState<L>) -> ParserResult<ast::Prefix> {
     let current_token = match state.current() {
         Ok(token) => token,
         Err(()) => return ParserResult::NotFound,
@@ -1360,7 +1361,7 @@ fn parse_prefix(state: &mut ParserState) -> ParserResult<ast::Prefix> {
                     ast::Expression::Parentheses {
                         contained: ContainedSpan::new(
                             left_parenthesis,
-                            TokenReference::basic_symbol(")"),
+                            TokenReference::basic_symbol::<L>(")"),
                         ),
                         expression,
                     },
@@ -1383,7 +1384,7 @@ fn parse_prefix(state: &mut ParserState) -> ParserResult<ast::Prefix> {
     }
 }
 
-fn parse_arguments(state: &mut ParserState) -> ParserResult<ast::FunctionArgs> {
+fn parse_arguments<L: Language>(state: &mut ParserState<L>) -> ParserResult<ast::FunctionArgs> {
     let current = match state.current() {
         Ok(token) => token,
         Err(()) => return ParserResult::NotFound,
@@ -1402,7 +1403,7 @@ fn parse_arguments(state: &mut ParserState) -> ParserResult<ast::FunctionArgs> {
             ) {
                 Some(token) => token,
 
-                None => TokenReference::basic_symbol(")"),
+                None => TokenReference::basic_symbol::<L>(")"),
             };
 
             ParserResult::Value(ast::FunctionArgs::Parentheses {
@@ -1429,7 +1430,7 @@ fn parse_arguments(state: &mut ParserState) -> ParserResult<ast::FunctionArgs> {
     }
 }
 
-fn parse_suffix(state: &mut ParserState) -> ParserResult<ast::Suffix> {
+fn parse_suffix<L: Language>(state: &mut ParserState<L>) -> ParserResult<ast::Suffix> {
     let Ok(current) = state.current() else {
         return ParserResult::NotFound;
     };
@@ -1477,7 +1478,7 @@ fn parse_suffix(state: &mut ParserState) -> ParserResult<ast::Suffix> {
             ) {
                 Some(right_bracket) => right_bracket,
 
-                None => TokenReference::basic_symbol("]"),
+                None => TokenReference::basic_symbol::<L>("]"),
             };
 
             ParserResult::Value(ast::Suffix::Index(ast::Index::Brackets {
@@ -1532,8 +1533,8 @@ fn parse_suffix(state: &mut ParserState) -> ParserResult<ast::Suffix> {
     }
 }
 
-fn parse_prefix_and_suffixes(
-    state: &mut ParserState,
+fn parse_prefix_and_suffixes<L: Language>(
+    state: &mut ParserState<L>,
 ) -> ParserResult<(ast::Prefix, Vec<ast::Suffix>)> {
     let prefix = match parse_prefix(state) {
         ParserResult::Value(prefix) => prefix,
@@ -1562,7 +1563,7 @@ fn parse_prefix_and_suffixes(
     ParserResult::Value((prefix, suffixes))
 }
 
-fn parse_expression(state: &mut ParserState) -> ParserResult<Expression> {
+fn parse_expression<L: Language>(state: &mut ParserState<L>) -> ParserResult<Expression> {
     let primary_expression = match parse_primary_expression(state) {
         ParserResult::Value(expression) => expression,
         ParserResult::NotFound => return ParserResult::NotFound,
@@ -1572,7 +1573,7 @@ fn parse_expression(state: &mut ParserState) -> ParserResult<Expression> {
     parse_expression_with_precedence(state, primary_expression, 0)
 }
 
-fn parse_primary_expression(state: &mut ParserState) -> ParserResult<Expression> {
+fn parse_primary_expression<L: Language>(state: &mut ParserState<L>) -> ParserResult<Expression> {
     let current_token = match state.current() {
         Ok(token) => token,
         Err(()) => return ParserResult::NotFound,
@@ -1726,8 +1727,8 @@ fn parse_primary_expression(state: &mut ParserState) -> ParserResult<Expression>
 }
 
 // rewrite todo: i think this should be iterative instead of recursive
-fn parse_expression_with_precedence(
-    state: &mut ParserState,
+fn parse_expression_with_precedence<L: Language>(
+    state: &mut ParserState<L>,
     mut lhs: Expression,
     precedence: u8,
 ) -> ParserResult<Expression> {
@@ -1796,8 +1797,8 @@ fn parse_expression_with_precedence(
     }
 }
 
-fn parse_unary_expression(
-    state: &mut ParserState,
+fn parse_unary_expression<L: Language>(
+    state: &mut ParserState<L>,
     unary_operator_token: ast::TokenReference,
 ) -> ParserResult<ast::Expression> {
     let unary_operator = match unary_operator_token.token_type() {
@@ -1836,7 +1837,7 @@ fn parse_unary_expression(
     })
 }
 
-fn parse_function_body(state: &mut ParserState) -> ParserResult<FunctionBody> {
+fn parse_function_body<L: Language>(state: &mut ParserState<L>) -> ParserResult<FunctionBody> {
     const NO_TRAILING_COMMAS_ERROR: &str = "trailing commas in arguments are not allowed";
 
     #[cfg(feature = "luau")]
@@ -1869,7 +1870,7 @@ fn parse_function_body(state: &mut ParserState) -> ParserResult<FunctionBody> {
                 generics: None, // rewrite todo: fix
                 parameters_parentheses: ContainedSpan::new(
                     left_parenthesis,
-                    TokenReference::basic_symbol(")"),
+                    TokenReference::basic_symbol::<L>(")"),
                 ),
                 parameters,
                 #[cfg(feature = "luau")]
@@ -1877,7 +1878,7 @@ fn parse_function_body(state: &mut ParserState) -> ParserResult<FunctionBody> {
                 #[cfg(feature = "luau")]
                 return_type: None,
                 block: ast::Block::new(),
-                end_token: TokenReference::basic_symbol("end"),
+                end_token: TokenReference::basic_symbol::<L>("end"),
             })
         };
 
@@ -2313,7 +2314,7 @@ fn parse_simple_type(
                 let left_parenthesis =
                     match state.require(Symbol::LeftParen, "expected `(` after `typeof`") {
                         Some(token) => token,
-                        None => TokenReference::basic_symbol("("),
+                        None => TokenReference::basic_symbol::<L>("("),
                     };
 
                 let ParserResult::Value(expression) = parse_expression(state) else {
@@ -2326,7 +2327,7 @@ fn parse_simple_type(
                     &left_parenthesis,
                 ) {
                     Some(token) => token,
-                    None => TokenReference::basic_symbol(")"),
+                    None => TokenReference::basic_symbol::<L>(")"),
                 };
 
                 ParserResult::Value(ast::TypeInfo::Typeof {
@@ -3082,7 +3083,7 @@ fn parse_name(state: &mut ParserState) -> ParserResult<Name> {
     }
 }
 
-fn parse_name_with_attributes(state: &mut ParserState) -> ParserResult<Name> {
+fn parse_name_with_attributes<L: Language>(state: &mut ParserState<L>) -> ParserResult<Name> {
     let Ok(current_token) = state.current() else {
         return ParserResult::NotFound;
     };
@@ -3097,7 +3098,7 @@ fn parse_name_with_attributes(state: &mut ParserState) -> ParserResult<Name> {
     }
 }
 
-fn parse_name_with_type_specifiers(state: &mut ParserState) -> ParserResult<Name> {
+fn parse_name_with_type_specifiers<L: Language>(state: &mut ParserState<L>) -> ParserResult<Name> {
     let Ok(current_token) = state.current() else {
         return ParserResult::NotFound;
     };
@@ -3112,7 +3113,7 @@ fn parse_name_with_type_specifiers(state: &mut ParserState) -> ParserResult<Name
     }
 }
 
-fn force_name(_state: &mut ParserState, name: TokenReference) -> Name {
+fn force_name<L: Language>(_state: &mut ParserState<L>, name: TokenReference) -> Name {
     Name {
         name,
         #[cfg(feature = "lua54")]
@@ -3227,17 +3228,17 @@ fn force_name_with_type_specifiers(state: &mut ParserState, name: TokenReference
 }
 
 #[cfg(not(feature = "luau"))]
-fn force_name_with_type_specifiers(state: &mut ParserState, name: TokenReference) -> Name {
+fn force_name_with_type_specifiers<L: Language>(state: &mut ParserState<L>, name: TokenReference) -> Name {
     force_name(state, name)
 }
 
 #[cfg(not(feature = "lua54"))]
-fn force_name_with_attributes(state: &mut ParserState, name: TokenReference) -> Name {
+fn force_name_with_attributes<L: Language>(state: &mut ParserState<L>, name: TokenReference) -> Name {
     force_name_with_type_specifiers(state, name)
 }
 
-fn one_or_more<T, F: Fn(&mut ParserState) -> ParserResult<T>>(
-    state: &mut ParserState,
+fn one_or_more<L: Language, T, F: Fn(&mut ParserState<L>) -> ParserResult<T>>(
+    state: &mut ParserState<L>,
     parser: F,
     delimiter: Symbol,
 ) -> ParserResult<Punctuated<T>> {
@@ -3279,10 +3280,10 @@ fn one_or_more<T, F: Fn(&mut ParserState) -> ParserResult<T>>(
     ParserResult::Value(values)
 }
 
-fn parse_name_list(state: &mut ParserState) -> ParserResult<Punctuated<Name>> {
+fn parse_name_list<L: Language>(state: &mut ParserState<L>) -> ParserResult<Punctuated<Name>> {
     one_or_more(state, parse_name_with_type_specifiers, Symbol::Comma)
 }
 
-fn parse_expression_list(state: &mut ParserState) -> ParserResult<Punctuated<Expression>> {
+fn parse_expression_list<L: Language>(state: &mut ParserState<L>) -> ParserResult<Punctuated<Expression>> {
     one_or_more(state, parse_expression, Symbol::Comma)
 }
