@@ -1,0 +1,15 @@
+[package]
+name = "full_moon_super"
+version = "0.1.0"
+description = "Default language module for full-moon parser"
+authors = ["Ali Rezvani <rzvxa@protonmail.com>", "Kampfkarren <kampfkarren@gmail.com>"]
+license = "MPL-2.0"
+edition = "2021"
+
+[features]
+default = ["serde"]
+
+[dependencies]
+paste = "1.0"
+full_moon_common = { path = "../full-moon-common", version = "=0.1.0" }
+serde = { version = "1.0", features = ["derive", "rc"], optional = true }

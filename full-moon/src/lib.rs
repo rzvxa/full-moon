@@ -19,16 +19,14 @@ pub mod tokenizer;
 /// Used to create visitors that recurse through [`Ast`](ast::Ast) nodes.
 pub mod visitors;
 
-pub mod language;
-
 mod private;
-mod short_string;
 mod util;
 
-pub use language::Language;
-// pub use ast::LuaVersion;
-pub use short_string::ShortString;
-use tokenizer::Position;
+use full_moon_common::{
+    language::Language,
+    short_string::ShortString,
+    tokenizer::{Position, TokenizerError},
+};
 
 use std::{borrow::Cow, fmt};
 
@@ -43,7 +41,7 @@ pub enum Error {
     /// Triggered if there's an issue creating an AST, but tokenizing must have succeeded
     AstError(ast::AstError),
     /// Triggered if there's an issue when tokenizing, and an AST can't be made
-    TokenizerError(tokenizer::TokenizerError),
+    TokenizerError(TokenizerError),
 }
 
 impl Error {

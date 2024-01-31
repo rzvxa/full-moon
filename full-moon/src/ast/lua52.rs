@@ -3,7 +3,7 @@
 
 use crate::tokenizer::TokenReference;
 use derive_more::Display;
-use full_moon_derive::{Node, Visit};
+use full_moon_common::{Node, Visit};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

@@ -2,8 +2,10 @@
 
 members = [
 	"full-moon",
+	"full-moon-common",
 	"full-moon-derive",
-	"full-moon-lua51",
+	# "full-moon-lua51",
+	"full-moon-super",
 ]
 
 resolver = "2"
