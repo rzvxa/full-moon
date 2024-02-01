@@ -1,11 +1,15 @@
-use crate::short_string::ShortString;
+use crate::{
+    language::Language,
+    lexer::{Lexer, LexerResult},
+    short_string::ShortString,
+    symbols::AnySymbol,
+    visitors::{Visit, VisitMut},
+};
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     fmt::{self, Display},
 };
-use crate::visitors::{Visit, VisitMut, Visitor, VisitorMut};
-use serde::{Serialize, Deserialize};
-
 
 /// Used to represent exact positions of tokens in code
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -182,19 +186,16 @@ impl<S> TokenType<S> {
     }
 }
 
-
-
-
 /// A token such consisting of its [`Position`] and a [`TokenType`]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct Token<S> {
+pub struct Token<S: AnySymbol> {
     pub(crate) start_position: Position,
     pub(crate) end_position: Position,
     pub(crate) token_type: TokenType<S>,
 }
 
-impl<S> Token<S> {
+impl<S: AnySymbol> Token<S> {
     /// Creates a token with a zero position
     pub fn new(token_type: TokenType<S>) -> Self {
         Self {
@@ -227,7 +228,7 @@ impl<S> Token<S> {
     }
 }
 
-impl<S> fmt::Display for Token<S> {
+impl<S: AnySymbol> fmt::Display for Token<S> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         use self::TokenType::*;
 
@@ -256,7 +257,7 @@ impl<S> fmt::Display for Token<S> {
                     write!(formatter, "{0}{1}{0}", quote_type.to_string(), literal)
                 }
             }
-            Symbol { symbol } => symbol.fmt(formatter),
+            Symbol { symbol } => todo!(),//symbol.fmt(formatter),
             Whitespace { characters } => characters.fmt(formatter),
 
             #[cfg(feature = "luau")]
@@ -281,57 +282,15 @@ impl<S> fmt::Display for Token<S> {
     }
 }
 
-impl<S> Ord for Token<S> {
+impl<S: AnySymbol> Ord for Token<S> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.start_position().cmp(&other.start_position())
     }
 }
 
-impl<S> PartialOrd for Token<S> {
+impl<S: AnySymbol> PartialOrd for Token<S> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
-    }
-}
-
-impl<S> Visit for Token<S> {
-    fn visit<V: Visitor>(&self, visitor: &mut V) {
-        visitor.visit_token(self);
-
-        match self.token_kind() {
-            TokenKind::Eof => {}
-            TokenKind::Identifier => visitor.visit_identifier(self),
-            TokenKind::MultiLineComment => visitor.visit_multi_line_comment(self),
-            TokenKind::Number => visitor.visit_number(self),
-            TokenKind::Shebang => {}
-            TokenKind::SingleLineComment => visitor.visit_single_line_comment(self),
-            TokenKind::StringLiteral => visitor.visit_string_literal(self),
-            TokenKind::Symbol => visitor.visit_symbol(self),
-            TokenKind::Whitespace => visitor.visit_whitespace(self),
-
-            #[cfg(feature = "luau")]
-            TokenKind::InterpolatedString => visitor.visit_interpolated_string_segment(self),
-        }
-    }
-}
-
-impl<S> VisitMut for Token<S> {
-    fn visit_mut<V: VisitorMut>(self, visitor: &mut V) -> Self {
-        let token = visitor.visit_token(self);
-
-        match token.token_kind() {
-            TokenKind::Eof => token,
-            TokenKind::Identifier => visitor.visit_identifier(token),
-            TokenKind::MultiLineComment => visitor.visit_multi_line_comment(token),
-            TokenKind::Number => visitor.visit_number(token),
-            TokenKind::Shebang => token,
-            TokenKind::SingleLineComment => visitor.visit_single_line_comment(token),
-            TokenKind::StringLiteral => visitor.visit_string_literal(token),
-            TokenKind::Symbol => visitor.visit_symbol(token),
-            TokenKind::Whitespace => visitor.visit_whitespace(token),
-
-            #[cfg(feature = "luau")]
-            TokenKind::InterpolatedString => visitor.visit_interpolated_string_segment(token),
-        }
     }
 }
 
@@ -367,13 +326,13 @@ pub enum TokenKind {
 /// Dereferences to a [`Token`]
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct TokenReference<S> {
+pub struct TokenReference<S: AnySymbol> {
     pub(crate) leading_trivia: Vec<Token<S>>,
     pub(crate) token: Token<S>,
     pub(crate) trailing_trivia: Vec<Token<S>>,
 }
 
-impl<S> TokenReference<S> {
+impl<S: AnySymbol> TokenReference<S> {
     /// Creates a TokenReference from leading/trailing trivia as well as the leading token
     pub fn new(
         leading_trivia: Vec<Token<S>>,
@@ -531,12 +490,12 @@ impl<S> TokenReference<S> {
     }
 
     /// Returns the trailing trivia
-    pub fn trailing_trivia(&self) -> impl Iterator<Item = &Token> {
+    pub fn trailing_trivia(&self) -> impl Iterator<Item = &Token<S>> {
         self.trailing_trivia.iter()
     }
 
     /// Creates a clone of the current TokenReference with the new inner token, preserving trivia.
-    pub fn with_token(&self, token: Token) -> Self {
+    pub fn with_token(&self, token: Token<S>) -> Self {
         Self {
             token,
             leading_trivia: self.leading_trivia.clone(),
@@ -545,18 +504,18 @@ impl<S> TokenReference<S> {
     }
 
     /// Checks if the token is the given symbol
-    pub fn is_symbol(&self, symbol: Symbol) -> bool {
+    pub fn is_symbol(&self, symbol: S) -> bool {
         self.token.token_type() == &TokenType::Symbol { symbol }
     }
 }
 
-impl<S> std::borrow::Borrow<Token<S>> for &TokenReference<S> {
+impl<S: AnySymbol> std::borrow::Borrow<Token<S>> for &TokenReference<S> {
     fn borrow(&self) -> &Token<S> {
         self
     }
 }
 
-impl<S> std::ops::Deref for TokenReference<S> {
+impl<S: AnySymbol> std::ops::Deref for TokenReference<S> {
     type Target = Token<S>;
 
     fn deref(&self) -> &Self::Target {
@@ -564,7 +523,7 @@ impl<S> std::ops::Deref for TokenReference<S> {
     }
 }
 
-impl<S> fmt::Display for TokenReference<S> {
+impl<S: AnySymbol> fmt::Display for TokenReference<S> {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         for trivia in &self.leading_trivia {
             trivia.fmt(formatter)?;
@@ -580,7 +539,7 @@ impl<S> fmt::Display for TokenReference<S> {
     }
 }
 
-impl PartialEq<Self> for TokenReference<S> {
+impl<S: AnySymbol> PartialEq<Self> for TokenReference<S> {
     fn eq(&self, other: &Self) -> bool {
         (**self).eq(other)
             && self.leading_trivia == other.leading_trivia
@@ -588,22 +547,22 @@ impl PartialEq<Self> for TokenReference<S> {
     }
 }
 
-impl Eq for TokenReference {}
+impl<S: AnySymbol> Eq for TokenReference<S> {}
 
-impl Ord for TokenReference {
+impl<S: AnySymbol> Ord for TokenReference<S> {
     fn cmp(&self, other: &Self) -> Ordering {
         (**self).cmp(&**other)
     }
 }
 
-impl<S> PartialOrd for TokenReference<S> {
+impl<S: AnySymbol> PartialOrd for TokenReference<S> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<S> Visit for TokenReference<S> {
-    fn visit<V: Visitor>(&self, visitor: &mut V) {
+impl<S: AnySymbol> Visit for TokenReference<S> {
+    fn visit<V>(&self, visitor: &mut V) {
         visitor.visit_token(self);
 
         if matches!(self.token().token_kind(), TokenKind::Eof) {
@@ -616,8 +575,8 @@ impl<S> Visit for TokenReference<S> {
     }
 }
 
-impl<S> VisitMut for TokenReference<S> {
-    fn visit_mut<V: VisitorMut>(self, visitor: &mut V) -> Self {
+impl<S: AnySymbol> VisitMut for TokenReference<S> {
+    fn visit_mut<V>(self, visitor: &mut V) -> Self {
         let mut token_reference = visitor.visit_token_reference(self);
 
         if matches!(token_reference.token().token_kind(), TokenKind::Eof) {

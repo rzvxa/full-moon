@@ -79,3 +79,5 @@ macro_rules! symbol {
         }
     };
 }
+
+pub trait AnySymbol: Clone + Ord {}

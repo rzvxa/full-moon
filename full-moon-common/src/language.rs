@@ -1,6 +1,5 @@
-use crate::lexer::Lexer;
+use crate::{lexer::Lexer, symbols::AnySymbol};
 
-pub trait Language<S> {
+pub trait Language<S: AnySymbol> {
     type Lex: Lexer<S>;
 }
-

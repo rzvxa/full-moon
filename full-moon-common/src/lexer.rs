@@ -1,6 +1,6 @@
-use crate::tokenizer::{Token, TokenReference, TokenizerError, Position};
+use crate::{tokenizer::{Token, TokenReference, TokenizerError, Position}, symbols::AnySymbol};
 
-pub trait Lexer<S> {
+pub trait Lexer<S: AnySymbol> {
     /// Creates a new Lexer from the given source string.
     fn new(source: &str) -> Self;
 
