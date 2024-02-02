@@ -15,9 +15,9 @@ use std::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Position {
-    pub(crate) bytes: usize,
-    pub(crate) line: usize,
-    pub(crate) character: usize,
+    pub bytes: usize,
+    pub line: usize,
+    pub character: usize,
 }
 
 impl Position {
@@ -190,9 +190,9 @@ impl<S> TokenType<S> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Token<S: AnySymbol> {
-    pub(crate) start_position: Position,
-    pub(crate) end_position: Position,
-    pub(crate) token_type: TokenType<S>,
+    pub start_position: Position,
+    pub end_position: Position,
+    pub token_type: TokenType<S>,
 }
 
 impl<S: AnySymbol> Token<S> {
@@ -327,9 +327,9 @@ pub enum TokenKind {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct TokenReference<S: AnySymbol> {
-    pub(crate) leading_trivia: Vec<Token<S>>,
-    pub(crate) token: Token<S>,
-    pub(crate) trailing_trivia: Vec<Token<S>>,
+    pub leading_trivia: Vec<Token<S>>,
+    pub token: Token<S>,
+    pub trailing_trivia: Vec<Token<S>>,
 }
 
 impl<S: AnySymbol> TokenReference<S> {
@@ -561,34 +561,6 @@ impl<S: AnySymbol> PartialOrd for TokenReference<S> {
     }
 }
 
-impl<S: AnySymbol> Visit for TokenReference<S> {
-    fn visit<V>(&self, visitor: &mut V) {
-        visitor.visit_token(self);
-
-        if matches!(self.token().token_kind(), TokenKind::Eof) {
-            visitor.visit_eof(self);
-        }
-
-        self.leading_trivia.visit(visitor);
-        self.token.visit(visitor);
-        self.trailing_trivia.visit(visitor);
-    }
-}
-
-impl<S: AnySymbol> VisitMut for TokenReference<S> {
-    fn visit_mut<V>(self, visitor: &mut V) -> Self {
-        let mut token_reference = visitor.visit_token_reference(self);
-
-        if matches!(token_reference.token().token_kind(), TokenKind::Eof) {
-            token_reference = visitor.visit_eof(token_reference);
-        }
-
-        token_reference.leading_trivia = token_reference.leading_trivia.visit_mut(visitor);
-        token_reference.token = token_reference.token.visit_mut(visitor);
-        token_reference.trailing_trivia = token_reference.trailing_trivia.visit_mut(visitor);
-        token_reference
-    }
-}
 
 /// The types of quotes used in a Lua string
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -621,9 +593,9 @@ impl fmt::Display for StringLiteralQuoteType {
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct TokenizerError {
     /// The type of error
-    pub(crate) error: TokenizerErrorType,
+    pub error: TokenizerErrorType,
     /// The range of the token that caused the error
-    pub(crate) range: (Position, Position),
+    pub range: (Position, Position),
 }
 
 impl TokenizerError {
@@ -675,6 +647,23 @@ pub enum TokenizerErrorType {
     /// Returned from [`TokenReference::symbol`]
     InvalidSymbol(String),
 }
+
+impl fmt::Display for TokenizerErrorType {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TokenizerErrorType::UnclosedComment => "unclosed comment".fmt(formatter),
+            TokenizerErrorType::UnclosedString => "unclosed string".fmt(formatter),
+            TokenizerErrorType::UnexpectedToken(character) => {
+                write!(formatter, "unexpected character {character}")
+            }
+            TokenizerErrorType::InvalidNumber => "invalid number".fmt(formatter),
+            TokenizerErrorType::InvalidSymbol(symbol) => {
+                write!(formatter, "invalid symbol {symbol}")
+            }
+        }
+    }
+}
+
 
 // Used by serde
 fn is_usize_zero(input: &usize) -> bool {

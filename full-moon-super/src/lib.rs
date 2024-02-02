@@ -12,6 +12,6 @@ pub struct SuperLua {
     lexer: SuperLexer,
 }
 
-impl Language<Symobl> for SuperLua {
+impl Language<Symbol> for SuperLua {
     type Lex = SuperLexer;
 }

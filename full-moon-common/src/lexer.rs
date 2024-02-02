@@ -37,7 +37,7 @@ pub enum LexerResult<T> {
 }
 
 impl<T: std::fmt::Debug> LexerResult<T> {
-    fn new(value: T, errors: Vec<TokenizerError>) -> Self {
+    pub fn new(value: T, errors: Vec<TokenizerError>) -> Self {
         if errors.is_empty() {
             Self::Ok(value)
         } else {
@@ -72,22 +72,22 @@ impl<T: std::fmt::Debug> LexerResult<T> {
 
 pub struct LexerSource {
     source: Vec<char>,
-    lexer_position: LexerPosition,
+    pub lexer_position: LexerPosition,
 }
 
 impl LexerSource {
-    fn new(source: &str) -> Self {
+    pub fn new(source: &str) -> Self {
         Self {
             source: source.chars().collect(),
             lexer_position: LexerPosition::new(),
         }
     }
 
-    pub(crate) fn current(&self) -> Option<char> {
+    pub fn current(&self) -> Option<char> {
         self.source.get(self.lexer_position.index).copied()
     }
 
-    pub(crate) fn next(&mut self) -> Option<char> {
+    pub fn next(&mut self) -> Option<char> {
         let next = self.current()?;
 
         if next == '\n' {
@@ -103,11 +103,11 @@ impl LexerSource {
         Some(next)
     }
 
-    pub(crate) fn peek(&self) -> Option<char> {
+    pub fn peek(&self) -> Option<char> {
         self.source.get(self.lexer_position.index + 1).copied()
     }
 
-    pub(crate) fn consume(&mut self, character: char) -> bool {
+    pub fn consume(&mut self, character: char) -> bool {
         if self.current() == Some(character) {
             self.next();
             true
@@ -116,13 +116,13 @@ impl LexerSource {
         }
     }
 
-    pub(crate) fn position(&self) -> Position {
+    pub fn position(&self) -> Position {
         self.lexer_position.position
     }
 }
 
 #[derive(Clone, Copy)]
-struct LexerPosition {
+pub struct LexerPosition {
     position: Position,
     index: usize,
 }
@@ -138,5 +138,15 @@ impl LexerPosition {
             index: 0,
         }
     }
+}
+
+pub enum MultiLineBodyResult {
+    Ok { blocks: usize, body: String },
+    NotMultiLine { blocks: usize },
+    Unclosed { blocks: usize, body: String },
+}
+
+pub fn is_identifier_start(character: char) -> bool {
+    matches!(character, 'a'..='z' | 'A'..='Z' | '_')
 }
 

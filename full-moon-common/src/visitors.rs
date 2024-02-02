@@ -148,81 +148,81 @@ macro_rules! create_visitor {
 }
 
 #[doc(hidden)]
-pub trait Visit {
-    fn visit<V>(&self, visitor: &mut V);
+pub trait Visit<V> {
+    fn visit(&self, visitor: &mut V);
 }
 
 #[doc(hidden)]
-pub trait VisitMut
+pub trait VisitMut<V>
 where
     Self: Sized,
 {
-    fn visit_mut<V>(self, visitor: &mut V) -> Self;
+    fn visit_mut(self, visitor: &mut V) -> Self;
 }
 
-impl<T: Visit> Visit for &T {
-    fn visit<V>(&self, visitor: &mut V) {
+impl<V, T: Visit<V>> Visit<V> for &T {
+    fn visit(&self, visitor: &mut V) {
         (**self).visit(visitor);
     }
 }
 
-impl<T: Visit> Visit for &mut T {
-    fn visit<V>(&self, visitor: &mut V) {
+impl<V, T: Visit<V>> Visit<V> for &mut T {
+    fn visit(&self, visitor: &mut V) {
         (**self).visit(visitor);
     }
 }
 
-impl<T: Visit> Visit for Vec<T> {
-    fn visit<V>(&self, visitor: &mut V) {
+impl<V, T: Visit<V>> Visit<V> for Vec<T> {
+    fn visit(&self, visitor: &mut V) {
         for item in self {
             item.visit(visitor);
         }
     }
 }
 
-impl<T: VisitMut> VisitMut for Vec<T> {
-    fn visit_mut<V>(self, visitor: &mut V) -> Self {
+impl<V, T: VisitMut<V>> VisitMut<V> for Vec<T> {
+    fn visit_mut(self, visitor: &mut V) -> Self {
         self.into_iter()
             .map(|item| item.visit_mut(visitor))
             .collect()
     }
 }
 
-impl<T: Visit> Visit for Option<T> {
-    fn visit<V>(&self, visitor: &mut V) {
+impl<V, T: Visit<V>> Visit<V> for Option<T> {
+    fn visit(&self, visitor: &mut V) {
         if let Some(item) = self {
             item.visit(visitor);
         }
     }
 }
 
-impl<T: VisitMut> VisitMut for Option<T> {
-    fn visit_mut<V>(self, visitor: &mut V) -> Self {
+impl<V, T: VisitMut<V>> VisitMut<V> for Option<T> {
+    fn visit_mut(self, visitor: &mut V) -> Self {
         self.map(|item| item.visit_mut(visitor))
     }
 }
 
-impl<A: Visit, B: Visit> Visit for (A, B) {
-    fn visit<V>(&self, visitor: &mut V) {
+impl<V, A: Visit<V>, B: Visit<V>> Visit<V> for (A, B) {
+    fn visit(&self, visitor: &mut V) {
         self.0.visit(visitor);
         self.1.visit(visitor);
     }
 }
 
-impl<A: VisitMut, B: VisitMut> VisitMut for (A, B) {
-    fn visit_mut<V>(self, visitor: &mut V) -> Self {
+impl<V, A: VisitMut<V>, B: VisitMut<V>> VisitMut<V> for (A, B) {
+    fn visit_mut(self, visitor: &mut V) -> Self {
         (self.0.visit_mut(visitor), self.1.visit_mut(visitor))
     }
 }
 
-impl<T: Visit> Visit for Box<T> {
-    fn visit<V>(&self, visitor: &mut V) {
+impl<V, T: Visit<V>> Visit<V> for Box<T> {
+    fn visit(&self, visitor: &mut V) {
         (**self).visit(visitor);
     }
 }
 
-impl<T: VisitMut> VisitMut for Box<T> {
-    fn visit_mut<V>(self, visitor: &mut V) -> Self {
+impl<V, T: VisitMut<V>> VisitMut<V> for Box<T> {
+    fn visit_mut(self, visitor: &mut V) -> Self {
         Box::new((*self).visit_mut(visitor))
     }
 }

@@ -1,7 +1,12 @@
 use crate::symbols::Symbol;
-use full_moon_common::{ lexer::{Lexer, LexerResult, LexerSource}, tokenizer::{
-    Position, Token, TokenReference, TokenType, TokenizerError, TokenizerErrorType,
-} };
+use full_moon_common::{
+    lexer::{is_identifier_start, Lexer, LexerResult, LexerSource, MultiLineBodyResult},
+    short_string::ShortString,
+    tokenizer::{
+        Position, StringLiteralQuoteType, Token, TokenReference, TokenType, TokenizerError,
+        TokenizerErrorType,
+    },
+};
 
 #[cfg(feature = "luau")]
 use super::{interpolated_strings, InterpolatedStringKind};
@@ -10,7 +15,7 @@ use super::{interpolated_strings, InterpolatedStringKind};
 /// If you just want to create an [`Ast`](crate::ast::Ast) from a string, you want to use
 /// [`parse`](crate::parse) instead.
 pub struct SuperLexer {
-    pub(crate) source: LexerSource,
+    pub source: LexerSource,
     sent_eof: bool,
 
     next_token: Option<LexerResult<TokenReference<Symbol>>>,
@@ -36,9 +41,9 @@ impl SuperLexer {
     fn create_recovered(
         &self,
         start_position: Position,
-        token_type: TokenType,
+        token_type: TokenType<Symbol>,
         errors: Vec<TokenizerError>,
-    ) -> Option<LexerResult<Token>> {
+    ) -> Option<LexerResult<Token<Symbol>>> {
         Some(LexerResult::new(
             Token {
                 token_type,
@@ -49,7 +54,7 @@ impl SuperLexer {
         ))
     }
 
-    fn process_next_with_trivia(&mut self) -> Option<LexerResult<TokenReference>> {
+    fn process_next_with_trivia(&mut self) -> Option<LexerResult<TokenReference<Symbol>>> {
         let mut leading_trivia = Vec::new();
         let mut errors: Option<Vec<TokenizerError>> = None;
 
@@ -97,7 +102,7 @@ impl SuperLexer {
         }
     }
 
-    fn process_first_with_trivia(&mut self) -> Option<LexerResult<TokenReference>> {
+    fn process_first_with_trivia(&mut self) -> Option<LexerResult<TokenReference<Symbol>>> {
         if self.source.current() == Some('#') && self.source.peek() == Some('!') {
             let start_position = self.source.position();
             let mut line = "#!".to_string();
@@ -132,7 +137,7 @@ impl SuperLexer {
         self.process_next_with_trivia()
     }
 
-    fn collect_trailing_trivia(&mut self) -> Vec<Token> {
+    fn collect_trailing_trivia(&mut self) -> Vec<Token<Symbol>> {
         let mut trailing_trivia = Vec::new();
 
         loop {
@@ -173,7 +178,7 @@ impl SuperLexer {
         &mut self,
         start_position: Position,
         mut number: String,
-    ) -> Option<LexerResult<Token>> {
+    ) -> Option<LexerResult<Token<Symbol>>> {
         let mut hit_decimal = false;
 
         while let Some(next) = self.source.current() {
@@ -205,7 +210,7 @@ impl SuperLexer {
         &mut self,
         start_position: Position,
         mut number: String,
-    ) -> LexerResult<Token> {
+    ) -> LexerResult<Token<Symbol>> {
         loop {
             if matches!(self.source.current(), Some(token) if token.is_ascii_whitespace())
                 || self.source.current().is_none()
@@ -234,7 +239,7 @@ impl SuperLexer {
         &mut self,
         start_position: Position,
         mut number: String,
-    ) -> Option<LexerResult<Token>> {
+    ) -> Option<LexerResult<Token<Symbol>>> {
         number.push(self.source.next().expect("peeked, but no next"));
 
         let next = self.source.current();
@@ -266,7 +271,7 @@ impl SuperLexer {
         &mut self,
         hex_character: char,
         start_position: Position,
-    ) -> Option<LexerResult<Token>> {
+    ) -> Option<LexerResult<Token<Symbol>>> {
         let mut number = String::from_iter(['0', hex_character]);
         let mut hit_decimal = false;
 
@@ -317,7 +322,7 @@ impl SuperLexer {
         &mut self,
         binary_character: char,
         start_position: Position,
-    ) -> Option<LexerResult<Token>> {
+    ) -> Option<LexerResult<Token<Symbol>>> {
         debug_assert!(self.lua_version.has_luau());
 
         let mut number = String::from_iter(['0', binary_character]);
@@ -345,7 +350,7 @@ impl SuperLexer {
     }
 
     // (string, had to be recovered?)
-    fn read_string(&mut self, quote: char) -> (TokenType, bool) {
+    fn read_string(&mut self, quote: char) -> (TokenType<Symbol>, bool) {
         let quote_type = match quote {
             '"' => StringLiteralQuoteType::Double,
             '\'' => StringLiteralQuoteType::Single,
@@ -429,7 +434,7 @@ impl SuperLexer {
     }
 
     // (comment, had to be recovered?)
-    fn read_comment(&mut self) -> (TokenType, bool) {
+    fn read_comment(&mut self) -> (TokenType<Symbol>, bool) {
         let mut comment = String::new();
 
         if self.source.consume('[') {
@@ -539,7 +544,7 @@ impl SuperLexer {
     }
 }
 
-impl Lexer for SuperLexer {
+impl Lexer<Symbol> for SuperLexer {
     /// Creates a new Lexer from the given source string and Lua version(s).
     fn new(source: &str) -> Self {
         let mut lexer = Self::new_lazy(source);
@@ -566,17 +571,17 @@ impl Lexer for SuperLexer {
     }
 
     /// Returns the current token.
-    fn current(&self) -> Option<&LexerResult<TokenReference>> {
+    fn current(&self) -> Option<&LexerResult<TokenReference<Symbol>>> {
         self.next_token.as_ref()
     }
 
     /// Returns the next token.
-    fn peek(&self) -> Option<&LexerResult<TokenReference>> {
+    fn peek(&self) -> Option<&LexerResult<TokenReference<Symbol>>> {
         self.peek_token.as_ref()
     }
 
     /// Consumes the current token and returns the next token.
-    fn consume(&mut self) -> Option<LexerResult<TokenReference>> {
+    fn consume(&mut self) -> Option<LexerResult<TokenReference<Symbol>>> {
         let next = self.next_token.take()?;
         self.next_token = self.peek_token.take();
         self.peek_token = self.process_next_with_trivia();
@@ -584,7 +589,7 @@ impl Lexer for SuperLexer {
     }
 
     /// Returns a vector of all tokens left in the source string.
-    fn collect(self) -> LexerResult<Vec<Token>> {
+    fn collect(self) -> LexerResult<Vec<Token<Symbol>>> {
         let mut tokens = Vec::new();
         let mut lexer = self;
         let mut errors = Vec::new();
@@ -613,7 +618,7 @@ impl Lexer for SuperLexer {
     }
 
     /// Processes and returns the next token in the source string, ignoring trivia.
-    fn process_next(&mut self) -> Option<LexerResult<Token>> {
+    fn process_next(&mut self) -> Option<LexerResult<Token<Symbol>>> {
         let start_position = self.source.position();
 
         let Some(next) = self.source.next() else {

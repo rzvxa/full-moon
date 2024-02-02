@@ -1,48 +1,80 @@
-use crate::tokenizer::{Token, TokenReference};
+use crate::symbols::Symbol;
 use full_moon_common::{
     create_visitor,
+    tokenizer::{Token, TokenKind, TokenReference},
     visitors::{Visit, VisitMut},
 };
 
-impl<S> Visit for Token<S> {
-    fn visit<V>(&self, visitor: &mut V) {
+impl Visit<dyn Visitor> for Token<Symbol> {
+    fn visit(&self, visitor: &mut impl Visitor) {
         visitor.visit_token(self);
 
-        match self.token_kind() {
-            TokenKind::Eof => {}
-            TokenKind::Identifier => visitor.visit_identifier(self),
-            TokenKind::MultiLineComment => visitor.visit_multi_line_comment(self),
-            TokenKind::Number => visitor.visit_number(self),
-            TokenKind::Shebang => {}
-            TokenKind::SingleLineComment => visitor.visit_single_line_comment(self),
-            TokenKind::StringLiteral => visitor.visit_string_literal(self),
-            TokenKind::Symbol => visitor.visit_symbol(self),
-            TokenKind::Whitespace => visitor.visit_whitespace(self),
-
-            #[cfg(feature = "luau")]
-            TokenKind::InterpolatedString => visitor.visit_interpolated_string_segment(self),
-        }
+        todo!();
+        // match self.token_kind() {
+        //     TokenKind::Eof => {}
+        //     TokenKind::Identifier => visitor.visit_identifier(self),
+        //     TokenKind::MultiLineComment => visitor.visit_multi_line_comment(self),
+        //     TokenKind::Number => visitor.visit_number(self),
+        //     TokenKind::Shebang => {}
+        //     TokenKind::SingleLineComment => visitor.visit_single_line_comment(self),
+        //     TokenKind::StringLiteral => visitor.visit_string_literal(self),
+        //     TokenKind::Symbol => visitor.visit_symbol(self),
+        //     TokenKind::Whitespace => visitor.visit_whitespace(self),
+        //
+        //     #[cfg(feature = "luau")]
+        //     TokenKind::InterpolatedString => visitor.visit_interpolated_string_segment(self),
+        // }
     }
 }
 
-impl<S> VisitMut for Token<S> {
-    fn visit_mut<V>(self, visitor: &mut V) -> Self {
-        let token = visitor.visit_token(self);
+impl VisitMut<dyn Visitor> for Token<Symbol> {
+    fn visit_mut(self, visitor: &mut impl Visitor) -> Self {
+        let token = visitor.visit_token(self as &Token);
 
-        match token.token_kind() {
-            TokenKind::Eof => token,
-            TokenKind::Identifier => visitor.visit_identifier(token),
-            TokenKind::MultiLineComment => visitor.visit_multi_line_comment(token),
-            TokenKind::Number => visitor.visit_number(token),
-            TokenKind::Shebang => token,
-            TokenKind::SingleLineComment => visitor.visit_single_line_comment(token),
-            TokenKind::StringLiteral => visitor.visit_string_literal(token),
-            TokenKind::Symbol => visitor.visit_symbol(token),
-            TokenKind::Whitespace => visitor.visit_whitespace(token),
+        todo!();
+        // match token.token_kind() {
+        //     TokenKind::Eof => token,
+        //     TokenKind::Identifier => visitor.visit_identifier(token),
+        //     TokenKind::MultiLineComment => visitor.visit_multi_line_comment(token),
+        //     TokenKind::Number => visitor.visit_number(token),
+        //     TokenKind::Shebang => token,
+        //     TokenKind::SingleLineComment => visitor.visit_single_line_comment(token),
+        //     TokenKind::StringLiteral => visitor.visit_string_literal(token),
+        //     TokenKind::Symbol => visitor.visit_symbol(token),
+        //     TokenKind::Whitespace => visitor.visit_whitespace(token),
+        //
+        //     #[cfg(feature = "luau")]
+        //     TokenKind::InterpolatedString => visitor.visit_interpolated_string_segment(token),
+        // }
+    }
+}
 
-            #[cfg(feature = "luau")]
-            TokenKind::InterpolatedString => visitor.visit_interpolated_string_segment(token),
+impl Visit<dyn Visitor> for TokenReference<Symbol> {
+    fn visit<V>(&self, visitor: &mut V) {
+        visitor.visit_token(self);
+
+        if matches!(self.token().token_kind(), TokenKind::Eof) {
+            visitor.visit_eof(self);
         }
+
+        self.leading_trivia.visit(visitor);
+        self.token.visit(visitor);
+        self.trailing_trivia.visit(visitor);
+    }
+}
+
+impl VisitMut<dyn Visitor> for TokenReference<Symbol> {
+    fn visit_mut<V>(self, visitor: &mut V) -> Self {
+        let mut token_reference = visitor.visit_token_reference(self);
+
+        if matches!(token_reference.token().token_kind(), TokenKind::Eof) {
+            token_reference = visitor.visit_eof(token_reference);
+        }
+
+        token_reference.leading_trivia = token_reference.leading_trivia.visit_mut(visitor);
+        token_reference.token = token_reference.token.visit_mut(visitor);
+        token_reference.trailing_trivia = token_reference.trailing_trivia.visit_mut(visitor);
+        token_reference
     }
 }
 

@@ -28,22 +28,6 @@ pub enum InterpolatedStringKind {
     Simple,
 }
 
-impl fmt::Display for TokenizerErrorType {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TokenizerErrorType::UnclosedComment => "unclosed comment".fmt(formatter),
-            TokenizerErrorType::UnclosedString => "unclosed string".fmt(formatter),
-            TokenizerErrorType::UnexpectedToken(character) => {
-                write!(formatter, "unexpected character {character}")
-            }
-            TokenizerErrorType::InvalidNumber => "invalid number".fmt(formatter),
-            TokenizerErrorType::InvalidSymbol(symbol) => {
-                write!(formatter, "invalid symbol {symbol}")
-            }
-        }
-    }
-}
-
 
 // #[cfg(test)]
 #[cfg(feature = "rewrite todo: tokenizer tests")]
