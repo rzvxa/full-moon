@@ -10,7 +10,7 @@
 pub mod ast;
 
 /// Contains the `Node` trait, implemented on all nodes
-pub mod node;
+// pub mod node;
 
 /// Used for tokenizing, the process of converting the code to individual tokens.
 /// Useful for getting symbols and manually tokenizing without going using an AST.
@@ -26,6 +26,7 @@ use full_moon_common::{
     language::Language,
     short_string::ShortString,
     tokenizer::{Position, TokenizerError},
+    node,
 };
 
 use std::{borrow::Cow, fmt};
@@ -33,49 +34,6 @@ use std::{borrow::Cow, fmt};
 #[cfg(all(test, not(feature = "serde")))]
 compile_error!("Serde feature must be enabled for tests");
 
-/// An error type that consists of both [`AstError`](ast::AstError) and [`TokenizerError`](tokenizer::TokenizerError)
-/// Used by [`parse`]
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-pub enum Error {
-    /// Triggered if there's an issue creating an AST, but tokenizing must have succeeded
-    AstError(ast::AstError),
-    /// Triggered if there's an issue when tokenizing, and an AST can't be made
-    TokenizerError(TokenizerError),
-}
-
-impl Error {
-    /// Returns a human readable error message
-    pub fn error_message(&self) -> Cow<'static, str> {
-        match self {
-            Error::AstError(error) => error.error_message(),
-            Error::TokenizerError(error) => error.to_string().into(),
-        }
-    }
-
-    /// Returns the range of the error
-    pub fn range(&self) -> (Position, Position) {
-        match self {
-            Error::AstError(error) => error.range(),
-            Error::TokenizerError(error) => error.range(),
-        }
-    }
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Error::AstError(error) => {
-                write!(formatter, "error occurred while creating ast: {error}")
-            }
-            Error::TokenizerError(error) => {
-                write!(formatter, "error occurred while tokenizing: {error}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for Error {}
 
 /// Creates an [`Ast`](ast::Ast) from Lua code.
 /// Will use the most complete set of Lua versions enabled in your feature set.

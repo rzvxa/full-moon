@@ -16,10 +16,10 @@
 //! ```
 use crate::{
     node::{Node, TokenItem, Tokens},
-    private::Sealed,
+    symbols::AnySymbol,
     tokenizer::{Position, TokenReference},
     util,
-    visitors::{Visit, VisitMut, Visitor, VisitorMut},
+    visitors::{Visit, VisitMut},
 };
 use derive_more::Display;
 #[cfg(feature = "serde")]
@@ -33,11 +33,11 @@ use std::{fmt::Display, iter::FromIterator};
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[display(bound = "T: Display")]
 #[display(fmt = "{}", "util::join_vec(pairs)")]
-pub struct Punctuated<T> {
-    pairs: Vec<Pair<T>>,
+pub struct Punctuated<T, S: AnySymbol> {
+    pairs: Vec<Pair<T, S>>,
 }
 
-impl<T> Punctuated<T> {
+impl<T, S: AnySymbol> Punctuated<T, S> {
     /// Creates an empty punctuated sequence
     /// ```rust
     /// # use full_moon::ast::punctuated::{Pair, Punctuated};
@@ -80,7 +80,7 @@ impl<T> Punctuated<T> {
     /// assert_eq!(iterator.next(), Some(&1));
     /// assert_eq!(iterator.next(), None);
     /// ```
-    pub fn iter(&self) -> Iter<'_, T> {
+    pub fn iter(&self) -> Iter<'_, T, S> {
         self.into_iter()
     }
 
@@ -94,7 +94,7 @@ impl<T> Punctuated<T> {
     /// }
     /// assert_eq!(punctuated.pop(), Some(Pair::new(2, None)));
     /// ```
-    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
+    pub fn iter_mut(&mut self) -> IterMut<'_, T, S> {
         self.into_iter()
     }
 
@@ -107,7 +107,7 @@ impl<T> Punctuated<T> {
     /// assert_eq!(iterator.next(), Some(Pair::new(1, None)));
     /// assert_eq!(iterator.next(), None);
     /// ```
-    pub fn into_pairs(self) -> impl Iterator<Item = Pair<T>> {
+    pub fn into_pairs(self) -> impl Iterator<Item = Pair<T, S>> {
         self.pairs.into_iter()
     }
 
@@ -119,7 +119,7 @@ impl<T> Punctuated<T> {
     /// punctuated.push(Pair::new(1, None));
     /// assert_eq!(punctuated.first(), Some(&Pair::new(1, None)));
     /// ```
-    pub fn first(&self) -> Option<&Pair<T>> {
+    pub fn first(&self) -> Option<&Pair<T, S>> {
         self.pairs.first()
     }
 
@@ -130,7 +130,7 @@ impl<T> Punctuated<T> {
     /// punctuated.push(Pair::new(1, None));
     /// assert_eq!(punctuated.last(), Some(&Pair::new(1, None)));
     /// ```
-    pub fn last(&self) -> Option<&Pair<T>> {
+    pub fn last(&self) -> Option<&Pair<T, S>> {
         self.pairs.last()
     }
 
@@ -143,7 +143,7 @@ impl<T> Punctuated<T> {
     /// assert_eq!(iterator.next(), Some(&Pair::new(1, None)));
     /// assert_eq!(iterator.next(), None);
     /// ```
-    pub fn pairs(&self) -> impl Iterator<Item = &Pair<T>> {
+    pub fn pairs(&self) -> impl Iterator<Item = &Pair<T, S>> {
         self.pairs.iter()
     }
 
@@ -157,7 +157,7 @@ impl<T> Punctuated<T> {
     /// }
     /// assert_eq!(punctuated.pop(), Some(Pair::new(2, None)));
     /// ```
-    pub fn pairs_mut(&mut self) -> impl Iterator<Item = &mut Pair<T>> {
+    pub fn pairs_mut(&mut self) -> impl Iterator<Item = &mut Pair<T, S>> {
         self.pairs.iter_mut()
     }
 
@@ -168,7 +168,7 @@ impl<T> Punctuated<T> {
     /// punctuated.push(Pair::new(1, None));
     /// assert_eq!(punctuated.pop(), Some(Pair::new(1, None)));
     /// ```
-    pub fn pop(&mut self) -> Option<Pair<T>> {
+    pub fn pop(&mut self) -> Option<Pair<T, S>> {
         self.pairs.pop()
     }
 
@@ -179,13 +179,13 @@ impl<T> Punctuated<T> {
     /// punctuated.push(Pair::new(1, None));
     /// assert_eq!(punctuated.pop(), Some(Pair::new(1, None)));
     /// ```
-    pub fn push(&mut self, pair: Pair<T>) {
+    pub fn push(&mut self, pair: Pair<T, S>) {
         self.pairs.push(pair);
     }
 
     /// Pushes a new node `T` onto the sequence, with the given punctuation.
     /// Will apply the punctuation to the last item, which must exist.
-    pub fn push_punctuated(&mut self, value: T, punctuation: TokenReference) {
+    pub fn push_punctuated(&mut self, value: T, punctuation: TokenReference<S>) {
         let last_pair = self.pairs.pop().expect(
             "push_punctuated adds the punctuation onto the last element, but there are no elements",
         );
@@ -201,15 +201,15 @@ impl<T> Punctuated<T> {
     }
 }
 
-impl<T> Default for Punctuated<T> {
+impl<T, S: AnySymbol> Default for Punctuated<T, S> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T> Sealed for Punctuated<T> {}
+// impl<T> Sealed for Punctuated<T> {}
 
-impl<T: Node> Node for Punctuated<T> {
+impl<T: Node<S>, S: AnySymbol> Node<S> for Punctuated<T, S> {
     fn start_position(&self) -> Option<Position> {
         self.pairs.first()?.start_position()
     }
@@ -224,34 +224,34 @@ impl<T: Node> Node for Punctuated<T> {
             .similar(&other.into_iter().collect::<Vec<_>>())
     }
 
-    fn tokens(&self) -> Tokens {
+    fn tokens(&self) -> Tokens<S> {
         self.pairs.tokens()
     }
 }
 
-impl<T: Visit> Visit for Punctuated<T> {
-    fn visit<V: Visitor>(&self, visitor: &mut V) {
+impl<V, T: Visit<V>, S: AnySymbol> Visit<V> for Punctuated<T, S> {
+    fn visit(&self, visitor: &mut V) {
         self.pairs.visit(visitor);
     }
 }
 
-impl<T: VisitMut> VisitMut for Punctuated<T> {
-    fn visit_mut<V: VisitorMut>(self, visitor: &mut V) -> Self {
+impl<V, T: VisitMut<V>, S: AnySymbol> VisitMut<V> for Punctuated<T, S> {
+    fn visit_mut(self, visitor: &mut V) -> Self {
         Punctuated {
             pairs: self.pairs.visit_mut(visitor),
         }
     }
 }
 
-impl<T> std::iter::Extend<Pair<T>> for Punctuated<T> {
-    fn extend<I: IntoIterator<Item = Pair<T>>>(&mut self, iter: I) {
+impl<T, S: AnySymbol> std::iter::Extend<Pair<T, S>> for Punctuated<T, S> {
+    fn extend<I: IntoIterator<Item = Pair<T, S>>>(&mut self, iter: I) {
         self.pairs.extend(iter);
     }
 }
 
-impl<T> IntoIterator for Punctuated<T> {
+impl<T, S: AnySymbol> IntoIterator for Punctuated<T, S> {
     type Item = T;
-    type IntoIter = IntoIter<T>;
+    type IntoIter = IntoIter<T, S>;
 
     fn into_iter(self) -> Self::IntoIter {
         IntoIter {
@@ -260,17 +260,17 @@ impl<T> IntoIterator for Punctuated<T> {
     }
 }
 
-impl<T> FromIterator<Pair<T>> for Punctuated<T> {
-    fn from_iter<I: IntoIterator<Item = Pair<T>>>(iter: I) -> Self {
+impl<T, S: AnySymbol> FromIterator<Pair<T, S>> for Punctuated<T, S> {
+    fn from_iter<I: IntoIterator<Item = Pair<T, S>>>(iter: I) -> Self {
         Punctuated {
             pairs: iter.into_iter().collect(),
         }
     }
 }
 
-impl<'a, T> IntoIterator for &'a Punctuated<T> {
+impl<'a, T, S: AnySymbol> IntoIterator for &'a Punctuated<T, S> {
     type Item = &'a T;
-    type IntoIter = Iter<'a, T>;
+    type IntoIter = Iter<'a, T, S>;
 
     fn into_iter(self) -> Self::IntoIter {
         Iter {
@@ -279,9 +279,9 @@ impl<'a, T> IntoIterator for &'a Punctuated<T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a mut Punctuated<T> {
+impl<'a, T, S: AnySymbol> IntoIterator for &'a mut Punctuated<T, S> {
     type Item = &'a mut T;
-    type IntoIter = IterMut<'a, T>;
+    type IntoIter = IterMut<'a, T, S>;
 
     fn into_iter(self) -> Self::IntoIter {
         IterMut {
@@ -292,11 +292,11 @@ impl<'a, T> IntoIterator for &'a mut Punctuated<T> {
 
 /// An iterator over owned values of type `T`.
 /// Refer to the [module documentation](index.html) for more details.
-pub struct IntoIter<T> {
-    inner: std::vec::IntoIter<Pair<T>>,
+pub struct IntoIter<T, S: AnySymbol> {
+    inner: std::vec::IntoIter<Pair<T, S>>,
 }
 
-impl<T> Iterator for IntoIter<T> {
+impl<T, S: AnySymbol> Iterator for IntoIter<T, S> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -306,11 +306,11 @@ impl<T> Iterator for IntoIter<T> {
 
 /// An iterator over borrowed values of type `&T`.
 /// Refer to the [module documentation](index.html) for more details.
-pub struct Iter<'a, T> {
-    inner: std::slice::Iter<'a, Pair<T>>,
+pub struct Iter<'a, T, S: AnySymbol> {
+    inner: std::slice::Iter<'a, Pair<T, S>>,
 }
 
-impl<'a, T> Iterator for Iter<'a, T> {
+impl<'a, T, S: AnySymbol> Iterator for Iter<'a, T, S> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -320,11 +320,11 @@ impl<'a, T> Iterator for Iter<'a, T> {
 
 /// An iterator over borrowed values of type `&mut T`.
 /// Refer to the [module documentation](index.html) for more details.
-pub struct IterMut<'a, T> {
-    inner: std::slice::IterMut<'a, Pair<T>>,
+pub struct IterMut<'a, T, S: AnySymbol> {
+    inner: std::slice::IterMut<'a, Pair<T, S>>,
 }
 
-impl<'a, T> Iterator for IterMut<'a, T> {
+impl<'a, T, S: AnySymbol> Iterator for IterMut<'a, T, S> {
     type Item = &'a mut T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -338,7 +338,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
 #[derive(Clone, Debug, Display, PartialEq, Eq)]
 #[display(bound = "T: Display")]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub enum Pair<T> {
+pub enum Pair<T, S: AnySymbol> {
     /// A node `T` with no trailing punctuation
     #[display(fmt = "{_0}")]
     End(T),
@@ -346,16 +346,16 @@ pub enum Pair<T> {
     /// A node `T` followed by punctuation (in the form of a
     /// [`TokenReference`](crate::tokenizer::TokenReference))
     #[display(fmt = "{_0}{_1}")]
-    Punctuated(T, TokenReference),
+    Punctuated(T, TokenReference<S>),
 }
 
-impl<T> Pair<T> {
+impl<T, S: AnySymbol> Pair<T, S> {
     /// Creates a `Pair` with node `T` and optional punctuation
     /// ```rust
     /// # use full_moon::ast::punctuated::Pair;
     /// let pair = Pair::new(1, None);
     /// ```
-    pub fn new(value: T, punctuation: Option<TokenReference>) -> Self {
+    pub fn new(value: T, punctuation: Option<TokenReference<S>>) -> Self {
         match punctuation {
             None => Pair::End(value),
             Some(punctuation) => Pair::Punctuated(value, punctuation),
@@ -368,7 +368,7 @@ impl<T> Pair<T> {
     /// let pair = Pair::new(1, None);
     /// assert_eq!(pair.into_tuple(), (1, None));
     /// ```
-    pub fn into_tuple(self) -> (T, Option<TokenReference>) {
+    pub fn into_tuple(self) -> (T, Option<TokenReference<S>>) {
         match self {
             Pair::End(value) => (value, None),
             Pair::Punctuated(value, punctuation) => (value, Some(punctuation)),
@@ -418,7 +418,7 @@ impl<T> Pair<T> {
     /// let pair = Pair::new(1, None);
     /// assert_eq!(pair.punctuation(), None);
     /// ```
-    pub fn punctuation(&self) -> Option<&TokenReference> {
+    pub fn punctuation(&self) -> Option<&TokenReference<S>> {
         match self {
             Pair::End(_) => None,
             Pair::Punctuated(_, punctuation) => Some(punctuation),
@@ -432,7 +432,7 @@ impl<T> Pair<T> {
     /// let pair = Pair::new(2, None);
     /// assert_eq!(*pair.map(|i| i * 2).value(), 4);
     /// ```
-    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Pair<U> {
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Pair<U, S> {
         match self {
             Pair::End(value) => Pair::End(f(value)),
             Pair::Punctuated(value, punctuated) => Pair::Punctuated(f(value), punctuated),
@@ -440,9 +440,9 @@ impl<T> Pair<T> {
     }
 }
 
-impl<T> Sealed for Pair<T> {}
+// impl<T> Sealed for Pair<T> {}
 
-impl<T: Node> Node for Pair<T> {
+impl<T: Node<S>, S: AnySymbol> Node<S> for Pair<T, S> {
     fn start_position(&self) -> Option<Position> {
         self.value().start_position()
     }
@@ -457,7 +457,7 @@ impl<T: Node> Node for Pair<T> {
         self.value().similar(other.value())
     }
 
-    fn tokens(&self) -> Tokens {
+    fn tokens(&self) -> Tokens<S> {
         match self {
             Pair::Punctuated(node, separator) => {
                 let mut items = node.tokens().items;
@@ -471,8 +471,8 @@ impl<T: Node> Node for Pair<T> {
     }
 }
 
-impl<T: Visit> Visit for Pair<T> {
-    fn visit<V: Visitor>(&self, visitor: &mut V) {
+impl<V, T: Visit<V>, S: AnySymbol> Visit<V> for Pair<T, S> {
+    fn visit(&self, visitor: &mut V) {
         match self {
             Pair::End(value) => value.visit(visitor),
             Pair::Punctuated(value, punctuation) => {
@@ -483,8 +483,8 @@ impl<T: Visit> Visit for Pair<T> {
     }
 }
 
-impl<T: VisitMut> VisitMut for Pair<T> {
-    fn visit_mut<V: VisitorMut>(self, visitor: &mut V) -> Self {
+impl<V, T: VisitMut<V>, S: AnySymbol> VisitMut<V> for Pair<T, S> {
+    fn visit_mut(self, visitor: &mut V) -> Self {
         match self {
             Pair::End(value) => Pair::End(value.visit_mut(visitor)),
             Pair::Punctuated(value, punctuation) => {

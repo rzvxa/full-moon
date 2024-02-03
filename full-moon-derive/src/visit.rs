@@ -136,7 +136,7 @@ impl DeriveGenerator for VisitGenerator {
 
         quote! {
             #[allow(unused_macros)]
-            impl #impl_generics crate::visitors::Visit for #input_ident #ty_generics #where_clause {
+            impl<S: AnySymbol> #impl_generics crate::visitors::Visit<S> for #input_ident #ty_generics #where_clause {
                 fn visit<V: crate::visitors::Visitor>(&self, visitor: &mut V) {
                     macro_rules! visit {
                         ($visit_what: expr, $visitor: expr) => {
@@ -171,7 +171,7 @@ impl DeriveGenerator for VisitGenerator {
             }
 
             #[allow(unused_macros)]
-            impl #impl_generics crate::visitors::VisitMut for #input_ident #ty_generics #where_clause {
+            impl<S: AnySymbol> #impl_generics crate::visitors::VisitMut<S> for #input_ident #ty_generics #where_clause {
                 fn visit_mut<V: crate::visitors::VisitorMut>(mut self, visitor: &mut V) -> Self {
                     macro_rules! visit {
                         ($visit_what: expr, $visitor: expr) => {
