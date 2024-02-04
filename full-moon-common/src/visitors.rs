@@ -226,3 +226,19 @@ impl<V, T: VisitMut<V>> VisitMut<V> for Box<T> {
         Box::new((*self).visit_mut(visitor))
     }
 }
+
+impl<S: crate::symbols::AnySymbol, V> Visit<V>
+    for crate::tokenizer::TokenReference<S>
+{
+    fn visit(&self, visitor: &mut V) {
+        self.visit(visitor);
+    }
+}
+
+impl<S: crate::symbols::AnySymbol, V> VisitMut<V>
+    for crate::tokenizer::TokenReference<S>
+{
+    fn visit_mut(self, visitor: &mut V) -> Self {
+        self.visit_mut(visitor)
+    }
+}

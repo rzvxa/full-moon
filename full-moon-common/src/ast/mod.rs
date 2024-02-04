@@ -2225,4 +2225,4 @@ impl<S: AnySymbol> fmt::Display for AstError<S> {
     }
 }
 
-impl<S: AnySymbol> std::error::Error for AstError<S> {}
+impl<S: AnySymbol + fmt::Debug> std::error::Error for AstError<S> {}

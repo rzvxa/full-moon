@@ -50,4 +50,4 @@ impl<S: symbols::AnySymbol> std::fmt::Display for Error<S> {
     }
 }
 
-impl<S: symbols::AnySymbol> std::error::Error for Error<S> {}
+impl<S: symbols::AnySymbol + std::fmt::Debug> std::error::Error for Error<S> {}

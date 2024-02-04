@@ -1,7 +1,10 @@
 use std::borrow::Cow;
 
 use crate::{
-    language::Language, lexer::LexerResult, symbols::AnySymbol, tokenizer::TokenReference,
+    language::Language,
+    lexer::{Lexer, LexerResult},
+    symbols::AnySymbol,
+    tokenizer::TokenReference,
 };
 
 pub struct ParserState<S: AnySymbol, L: Language<S>> {
