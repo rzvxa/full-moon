@@ -41,11 +41,11 @@ impl<S: AnySymbol> ContainedSpan<S> {
 
 impl<S: AnySymbol> Node<S> for ContainedSpan<S> {
     fn start_position(&self) -> Option<Position> {
-        Some(self.tokens.0.start_position())
+        self.tokens.0.start_position()
     }
 
     fn end_position(&self) -> Option<Position> {
-        Some(self.tokens.1.end_position())
+        self.tokens.1.end_position()
     }
 
     fn similar(&self, other: &Self) -> bool {

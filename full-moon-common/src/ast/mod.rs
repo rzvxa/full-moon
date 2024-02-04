@@ -3,6 +3,9 @@ pub mod parser_structs;
 pub mod punctuated;
 pub mod span;
 
+pub use punctuated::Punctuated;
+pub use span::ContainedSpan;
+
 use crate::{
     language::Language,
     symbols::AnySymbol,
@@ -12,8 +15,6 @@ use crate::{
         join_iterators, join_vec,
     },
 };
-use punctuated::Punctuated;
-use span::ContainedSpan;
 
 use derive_more::Display;
 use full_moon_derive::{Node, Visit};
@@ -23,14 +24,14 @@ use std::{borrow::Cow, fmt};
 /// An abstract syntax tree, contains all the nodes used in the code
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct Ast<S: AnySymbol> {
-    pub(crate) nodes: Block<S>,
+pub struct Ast<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
+    pub(crate) nodes: Block<S, B, U, R>,
     pub(crate) eof: TokenReference<S>,
 }
 
-impl<S: AnySymbol> Ast<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> Ast<S, B, U, R> {
     /// Returns a new Ast with the given nodes
-    pub fn with_nodes(self, nodes: Block<S>) -> Self {
+    pub fn with_nodes(self, nodes: Block<S, B, U, R>) -> Self {
         Self { nodes, ..self }
     }
 
@@ -47,12 +48,12 @@ impl<S: AnySymbol> Ast<S> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn nodes(&self) -> &Block<S> {
+    pub fn nodes(&self) -> &Block<S, B, U, R> {
         &self.nodes
     }
 
     /// The entire code of the function, but mutable
-    pub fn nodes_mut(&mut self) -> &mut Block<S> {
+    pub fn nodes_mut(&mut self) -> &mut Block<S, B, U, R> {
         &mut self.nodes
     }
 
@@ -71,13 +72,13 @@ impl<S: AnySymbol> Ast<S> {
     "display_optional_punctuated_vec(stmts)",
     "display_option(&last_stmt.as_ref().map(display_optional_punctuated))"
 )]
-pub struct Block<S: AnySymbol> {
-    stmts: Vec<(Stmt<S>, Option<TokenReference<S>>)>,
+pub struct Block<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
+    stmts: Vec<(Stmt<S, B, U, R>, Option<TokenReference<S>>)>,
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    last_stmt: Option<(LastStmt<S>, Option<TokenReference<S>>)>,
+    last_stmt: Option<(LastStmt<S, B, U, R>, Option<TokenReference<S>>)>,
 }
 
-impl<S: AnySymbol> Block<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> Block<S, B, U, R> {
     /// Creates an empty block
     pub fn new() -> Self {
         Self {
@@ -90,7 +91,7 @@ impl<S: AnySymbol> Block<S> {
     ///
     /// Note that this does not contain the final statement which can be
     /// attained via [`Block::last_stmt`].
-    pub fn stmts(&self) -> impl Iterator<Item = &Stmt<S>> {
+    pub fn stmts(&self) -> impl Iterator<Item = &Stmt<S, B, U, R>> {
         self.stmts.iter().map(|(stmt, _)| stmt)
     }
 
@@ -98,23 +99,25 @@ impl<S: AnySymbol> Block<S> {
     /// semicolon token reference present
     pub fn stmts_with_semicolon(
         &self,
-    ) -> impl Iterator<Item = &(Stmt<S>, Option<TokenReference<S>>)> {
+    ) -> impl Iterator<Item = &(Stmt<S, B, U, R>, Option<TokenReference<S>>)> {
         self.stmts.iter()
     }
 
     /// The last statement of the block if one exists, such as `return foo`
-    pub fn last_stmt(&self) -> Option<&LastStmt<S>> {
+    pub fn last_stmt(&self) -> Option<&LastStmt<S, B, U, R>> {
         Some(&self.last_stmt.as_ref()?.0)
     }
 
     /// The last statement of the block if on exists, including any optional semicolon token reference present
-    pub fn last_stmt_with_semicolon(&self) -> Option<&(LastStmt<S>, Option<TokenReference<S>>)> {
+    pub fn last_stmt_with_semicolon(
+        &self,
+    ) -> Option<&(LastStmt<S, B, U, R>, Option<TokenReference<S>>)> {
         self.last_stmt.as_ref()
     }
 
     /// Returns a new block with the given statements
     /// Takes a vector of statements, followed by an optional semicolon token reference
-    pub fn with_stmts(self, stmts: Vec<(Stmt<S>, Option<TokenReference<S>>)>) -> Self {
+    pub fn with_stmts(self, stmts: Vec<(Stmt<S, B, U, R>, Option<TokenReference<S>>)>) -> Self {
         Self { stmts, ..self }
     }
 
@@ -122,7 +125,7 @@ impl<S: AnySymbol> Block<S> {
     /// Takes an optional last statement, with an optional semicolon
     pub fn with_last_stmt(
         self,
-        last_stmt: Option<(LastStmt<S>, Option<TokenReference<S>>)>,
+        last_stmt: Option<(LastStmt<S, B, U, R>, Option<TokenReference<S>>)>,
     ) -> Self {
         Self { last_stmt, ..self }
     }
@@ -141,40 +144,40 @@ impl<S: AnySymbol> Block<S> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[non_exhaustive]
-pub enum Stmt<S: AnySymbol> {
+pub enum Stmt<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     /// An assignment, such as `x = 1`
     #[display(fmt = "{_0}")]
-    Assignment(Assignment<S>),
+    Assignment(Assignment<S, B, U, R>),
     /// A do block, `do end`
     #[display(fmt = "{_0}")]
-    Do(Do<S>),
+    Do(Do<S, B, U, R>),
     /// A function call on its own, such as `call()`
     #[display(fmt = "{_0}")]
-    FunctionCall(FunctionCall<S>),
+    FunctionCall(FunctionCall<S, B, U, R>),
     /// A function declaration, such as `function x() end`
     #[display(fmt = "{_0}")]
-    FunctionDeclaration(FunctionDeclaration<S>),
+    FunctionDeclaration(FunctionDeclaration<S, B, U, R>),
     /// A generic for loop, such as `for index, value in pairs(list) do end`
     #[display(fmt = "{_0}")]
-    GenericFor(GenericFor<S>),
+    GenericFor(GenericFor<S, B, U, R>),
     /// An if statement
     #[display(fmt = "{_0}")]
-    If(If<S>),
+    If(If<S, B, U, R>),
     /// A local assignment, such as `local x = 1`
     #[display(fmt = "{_0}")]
-    LocalAssignment(LocalAssignment<S>),
+    LocalAssignment(LocalAssignment<S, B, U, R>),
     /// A local function declaration, such as `local function x() end`
     #[display(fmt = "{_0}")]
-    LocalFunction(LocalFunction<S>),
+    LocalFunction(LocalFunction<S, B, U, R>),
     /// A numeric for loop, such as `for index = 1, 10 do end`
     #[display(fmt = "{_0}")]
-    NumericFor(NumericFor<S>),
+    NumericFor(NumericFor<S, B, U, R>),
     /// A repeat loop
     #[display(fmt = "{_0}")]
-    Repeat(Repeat<S>),
+    Repeat(Repeat<S, B, U, R>),
     /// A while loop
     #[display(fmt = "{_0}")]
-    While(While<S>),
+    While(While<S, B, U, R>),
 
     /// A compound assignment, such as `+=`
     /// Only available when the "luau" feature flag is enabled
@@ -205,7 +208,7 @@ pub enum Stmt<S: AnySymbol> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[non_exhaustive]
-pub enum LastStmt<S: AnySymbol> {
+pub enum LastStmt<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     /// A `break` statement
     Break(TokenReference<S>),
     /// A continue statement
@@ -213,54 +216,19 @@ pub enum LastStmt<S: AnySymbol> {
     #[cfg(feature = "luau")]
     Continue(TokenReference),
     /// A `return` statement
-    Return(Return<S>),
+    Return(R),
 }
 
 /// A `return` statement
-// #[derive(Clone, Debug, Display, PartialEq, Node, Visit)]
-#[derive(Clone, Debug, Display, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-#[display(fmt = "{token}{returns}")]
-pub struct Return<S: AnySymbol> {
-    token: TokenReference<S>,
-    returns: Punctuated<Expression<S>, S>,
-}
-
-impl<S: AnySymbol> Return<S> {
-    /// Creates a new empty Return
-    /// Default return token is followed by a single space
-    pub fn new() -> Self {
-        Self {
-            token: TokenReference::basic_symbol("return "),
-            returns: Punctuated::new(),
-        }
-    }
-
+pub trait Return<S: AnySymbol, B: BinOp<S>, U: UnOp<S>> {
     /// The `return` token
-    pub fn token(&self) -> &TokenReference<S> {
-        &self.token
-    }
-
+    fn token(&self) -> &TokenReference<S>;
     /// The values being returned
-    pub fn returns(&self) -> &Punctuated<Expression<S>, S> {
-        &self.returns
-    }
-
+    fn returns(&self) -> &Punctuated<Expression<S, B, U, Self>, S>;
     /// Returns a new Return with the given `return` token
-    pub fn with_token(self, token: TokenReference<S>) -> Self {
-        Self { token, ..self }
-    }
-
+    fn with_token(self, token: TokenReference<S>) -> Self;
     /// Returns a new Return with the given punctuated sequence
-    pub fn with_returns(self, returns: Punctuated<Expression<S>, S>) -> Self {
-        Self { returns, ..self }
-    }
-}
-
-impl<S: AnySymbol> Default for Return<S> {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn with_returns(self, returns: Punctuated<Expression<S, B, U, Self>, S>) -> Self;
 }
 
 /// Fields of a [`TableConstructor`]
@@ -268,7 +236,7 @@ impl<S: AnySymbol> Default for Return<S> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[non_exhaustive]
-pub enum Field<S: AnySymbol> {
+pub enum Field<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     /// A key in the format of `[expression] = value`
     #[display(
         fmt = "{}{}{}{}{}",
@@ -282,11 +250,11 @@ pub enum Field<S: AnySymbol> {
         /// The `[...]` part of `[expression] = value`
         brackets: ContainedSpan<S>,
         /// The `expression` part of `[expression] = value`
-        key: Expression<S>,
+        key: Expression<S, B, U, R>,
         /// The `=` part of `[expression] = value`
         equal: TokenReference<S>,
         /// The `value` part of `[expression] = value`
-        value: Expression<S>,
+        value: Expression<S, B, U, R>,
     },
 
     /// A key in the format of `name = value`
@@ -297,12 +265,12 @@ pub enum Field<S: AnySymbol> {
         /// The `=` part of `name = value`
         equal: TokenReference<S>,
         /// The `value` part of `name = value`
-        value: Expression<S>,
+        value: Expression<S, B, U, R>,
     },
 
     /// A field with no key, just a value (such as `"a"` in `{ "a" }`)
     #[display(fmt = "{_0}")]
-    NoKey(Expression<S>),
+    NoKey(Expression<S, B, U, R>),
 }
 
 /// A table being constructed, such as `{ 1, 2, 3 }` or `{ a = 1 }`
@@ -310,14 +278,14 @@ pub enum Field<S: AnySymbol> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[display(fmt = "{}{}{}", "braces.tokens().0", "fields", "braces.tokens().1")]
-pub struct TableConstructor<S: AnySymbol> {
+pub struct TableConstructor<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     // #[node(full_range)]
     // #[visit(contains = "fields")]
     braces: ContainedSpan<S>,
-    fields: Punctuated<Field<S>, S>,
+    fields: Punctuated<Field<S, B, U, R>, S>,
 }
 
-impl<S: AnySymbol> TableConstructor<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> TableConstructor<S, B, U, R> {
     /// Creates a new empty TableConstructor
     /// Brace tokens are followed by spaces, such that { `fields` }
     pub fn new() -> Self {
@@ -336,7 +304,7 @@ impl<S: AnySymbol> TableConstructor<S> {
     }
 
     /// Returns the [`Punctuated`] sequence of the fields used to create the table
-    pub fn fields(&self) -> &Punctuated<Field<S>, S> {
+    pub fn fields(&self) -> &Punctuated<Field<S, B, U, R>, S> {
         &self.fields
     }
 
@@ -346,12 +314,12 @@ impl<S: AnySymbol> TableConstructor<S> {
     }
 
     /// Returns a new TableConstructor with the given fields
-    pub fn with_fields(self, fields: Punctuated<Field<S>, S>) -> Self {
+    pub fn with_fields(self, fields: Punctuated<Field<S, B, U, R>, S>) -> Self {
         Self { fields, ..self }
     }
 }
 
-impl<S: AnySymbol> Default for TableConstructor<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> Default for TableConstructor<S, B, U, R> {
     fn default() -> Self {
         Self::new()
     }
@@ -362,16 +330,16 @@ impl<S: AnySymbol> Default for TableConstructor<S> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[non_exhaustive]
-pub enum Expression<S: AnySymbol> {
+pub enum Expression<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     /// A binary operation, such as `1 + 3`
     #[display(fmt = "{lhs}{binop}{rhs}")]
     BinaryOperator {
         /// The left hand side of the binary operation, the `1` part of `1 + 3`
-        lhs: Box<Expression<S>>,
+        lhs: Box<Expression<S, B, U, R>>,
         /// The binary operation used, the `+` part of `1 + 3`
-        binop: BinOp<S>,
+        binop: B,
         /// The right hand side of the binary operation, the `3` part of `1 + 3`
-        rhs: Box<Expression<S>>,
+        rhs: Box<Expression<S, B, U, R>>,
     },
 
     /// A statement in parentheses, such as `(#list)`
@@ -386,25 +354,25 @@ pub enum Expression<S: AnySymbol> {
         // #[node(full_range)]
         contained: ContainedSpan<S>,
         /// The expression inside the parentheses
-        expression: Box<Expression<S>>,
+        expression: Box<Expression<S, B, U, R>>,
     },
 
     /// A unary operation, such as `#list`
     #[display(fmt = "{unop}{expression}")]
     UnaryOperator {
         /// The unary operation, the `#` part of `#list`
-        unop: UnOp<S>,
+        unop: U,
         /// The expression the operation is being done on, the `list` part of `#list`
-        expression: Box<Expression<S>>,
+        expression: Box<Expression<S, B, U, R>>,
     },
 
     /// An anonymous function, such as `function() end)`
     #[display(fmt = "{}{}", "_0.0", "_0.1")]
-    Function((TokenReference<S>, FunctionBody<S>)),
+    Function((TokenReference<S>, FunctionBody<S, B, U, R>)),
 
     /// A call of a function, such as `call()`
     #[display(fmt = "{_0}")]
-    FunctionCall(FunctionCall<S>),
+    FunctionCall(FunctionCall<S, B, U, R>),
 
     /// An if expression, such as `if foo then true else false`.
     /// Only available when the "luau" feature flag is enabled.
@@ -420,7 +388,7 @@ pub enum Expression<S: AnySymbol> {
 
     /// A table constructor, such as `{ 1, 2, 3 }`
     #[display(fmt = "{_0}")]
-    TableConstructor(TableConstructor<S>),
+    TableConstructor(TableConstructor<S, B, U, R>),
 
     /// A number token, such as `3.3`
     #[display(fmt = "{_0}")]
@@ -448,7 +416,7 @@ pub enum Expression<S: AnySymbol> {
 
     /// A more complex value, such as `call().x`
     #[display(fmt = "{_0}")]
-    Var(Var<S>),
+    Var(Var<S, B, U, R>),
 }
 
 /// A node used before another in cases such as function calling
@@ -457,10 +425,10 @@ pub enum Expression<S: AnySymbol> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[non_exhaustive]
-pub enum Prefix<S: AnySymbol> {
+pub enum Prefix<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     #[display(fmt = "{_0}")]
     /// A complicated expression, such as `("foo")`
-    Expression(Box<Expression<S>>),
+    Expression(Box<Expression<S, B, U, R>>),
     #[display(fmt = "{_0}")]
     /// Just a name, such as `foo`
     Name(TokenReference<S>),
@@ -472,7 +440,7 @@ pub enum Prefix<S: AnySymbol> {
 // #[derive(Clone, Debug, Display, PartialEq, Node)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[non_exhaustive]
-pub enum Index<S: AnySymbol> {
+pub enum Index<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     /// Indexing in the form of `x["y"]`
     #[display(
         fmt = "{}{}{}",
@@ -484,7 +452,7 @@ pub enum Index<S: AnySymbol> {
         /// The `[...]` part of `["y"]`
         brackets: ContainedSpan<S>,
         /// The `"y"` part of `["y"]`
-        expression: Expression<S>,
+        expression: Expression<S, B, U, R>,
     },
 
     /// Indexing in the form of `x.y`
@@ -502,7 +470,7 @@ pub enum Index<S: AnySymbol> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[non_exhaustive]
-pub enum FunctionArgs<S: AnySymbol> {
+pub enum FunctionArgs<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     /// Used when a function is called in the form of `call(1, 2, 3)`
     #[display(
         fmt = "{}{}{}",
@@ -515,17 +483,17 @@ pub enum FunctionArgs<S: AnySymbol> {
         // #[node(full_range)]
         parentheses: ContainedSpan<S>,
         /// The `1, 2, 3` part of `1, 2, 3`
-        arguments: Punctuated<Expression<S>, S>,
+        arguments: Punctuated<Expression<S, B, U, R>, S>,
     },
     /// Used when a function is called in the form of `call "foobar"`
     #[display(fmt = "{_0}")]
     String(TokenReference<S>),
     /// Used when a function is called in the form of `call { 1, 2, 3 }`
     #[display(fmt = "{_0}")]
-    TableConstructor(TableConstructor<S>),
+    TableConstructor(TableConstructor<S, B, U, R>),
 }
 
-impl<S: AnySymbol> FunctionArgs<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> FunctionArgs<S, B, U, R> {
     pub(crate) fn empty() -> Self {
         FunctionArgs::Parentheses {
             parentheses: ContainedSpan::new(
@@ -542,29 +510,29 @@ impl<S: AnySymbol> FunctionArgs<S> {
 // #[derive(Clone, Debug, PartialEq, Node)]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct NumericFor<S: AnySymbol> {
+pub struct NumericFor<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     for_token: TokenReference<S>,
     index_variable: TokenReference<S>,
     equal_token: TokenReference<S>,
-    start: Expression<S>,
+    start: Expression<S, B, U, R>,
     start_end_comma: TokenReference<S>,
-    end: Expression<S>,
+    end: Expression<S, B, U, R>,
     end_step_comma: Option<TokenReference<S>>,
-    step: Option<Expression<S>>,
+    step: Option<Expression<S, B, U, R>>,
     do_token: TokenReference<S>,
-    block: Block<S>,
+    block: Block<S, B, U, R>,
     end_token: TokenReference<S>,
     #[cfg(feature = "luau")]
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     type_specifier: Option<TypeSpecifier>,
 }
 
-impl<S: AnySymbol> NumericFor<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> NumericFor<S, B, U, R> {
     /// Creates a new NumericFor from the given index variable, start, and end expressions
     pub fn new(
         index_variable: TokenReference<S>,
-        start: Expression<S>,
-        end: Expression<S>,
+        start: Expression<S, B, U, R>,
+        end: Expression<S, B, U, R>,
     ) -> Self {
         Self {
             for_token: TokenReference::basic_symbol("for "),
@@ -599,7 +567,7 @@ impl<S: AnySymbol> NumericFor<S> {
     }
 
     /// The starting point, `1` in the initial example
-    pub fn start(&self) -> &Expression<S> {
+    pub fn start(&self) -> &Expression<S, B, U, R> {
         &self.start
     }
 
@@ -611,7 +579,7 @@ impl<S: AnySymbol> NumericFor<S> {
     }
 
     /// The ending point, `10` in the initial example
-    pub fn end(&self) -> &Expression<S> {
+    pub fn end(&self) -> &Expression<S, B, U, R> {
         &self.end
     }
 
@@ -623,7 +591,7 @@ impl<S: AnySymbol> NumericFor<S> {
     }
 
     /// The step if one exists, `2` in `for index = 0, 10, 2 do end`
-    pub fn step(&self) -> Option<&Expression<S>> {
+    pub fn step(&self) -> Option<&Expression<S, B, U, R>> {
         self.step.as_ref()
     }
 
@@ -633,7 +601,7 @@ impl<S: AnySymbol> NumericFor<S> {
     }
 
     /// The code inside the for loop
-    pub fn block(&self) -> &Block<S> {
+    pub fn block(&self) -> &Block<S, B, U, R> {
         &self.block
     }
 
@@ -673,7 +641,7 @@ impl<S: AnySymbol> NumericFor<S> {
     }
 
     /// Returns a new NumericFor with the given start expression
-    pub fn with_start(self, start: Expression<S>) -> Self {
+    pub fn with_start(self, start: Expression<S, B, U, R>) -> Self {
         Self { start, ..self }
     }
 
@@ -686,7 +654,7 @@ impl<S: AnySymbol> NumericFor<S> {
     }
 
     /// Returns a new NumericFor with the given end expression
-    pub fn with_end(self, end: Expression<S>) -> Self {
+    pub fn with_end(self, end: Expression<S, B, U, R>) -> Self {
         Self { end, ..self }
     }
 
@@ -699,7 +667,7 @@ impl<S: AnySymbol> NumericFor<S> {
     }
 
     /// Returns a new NumericFor with the given step expression
-    pub fn with_step(self, step: Option<Expression<S>>) -> Self {
+    pub fn with_step(self, step: Option<Expression<S, B, U, R>>) -> Self {
         Self { step, ..self }
     }
 
@@ -709,7 +677,7 @@ impl<S: AnySymbol> NumericFor<S> {
     }
 
     /// Returns a new NumericFor with the given block
-    pub fn with_block(self, block: Block<S>) -> Self {
+    pub fn with_block(self, block: Block<S, B, U, R>) -> Self {
         Self { block, ..self }
     }
 
@@ -729,7 +697,9 @@ impl<S: AnySymbol> NumericFor<S> {
     }
 }
 
-impl<S: AnySymbol> fmt::Display for NumericFor<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> fmt::Display
+    for NumericFor<S, B, U, R>
+{
     #[cfg(feature = "luau")]
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(
@@ -774,23 +744,23 @@ impl<S: AnySymbol> fmt::Display for NumericFor<S> {
 // #[derive(Clone, Debug, PartialEq, Node)]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct GenericFor<S: AnySymbol> {
+pub struct GenericFor<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     for_token: TokenReference<S>,
     names: Punctuated<TokenReference<S>, S>,
     in_token: TokenReference<S>,
-    expr_list: Punctuated<Expression<S>, S>,
+    expr_list: Punctuated<Expression<S, B, U, R>, S>,
     do_token: TokenReference<S>,
-    block: Block<S>,
+    block: Block<S, B, U, R>,
     end_token: TokenReference<S>,
     #[cfg(feature = "luau")]
     type_specifiers: Vec<Option<TypeSpecifier>>,
 }
 
-impl<S: AnySymbol> GenericFor<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> GenericFor<S, B, U, R> {
     /// Creates a new GenericFor from the given names and expressions
     pub fn new(
         names: Punctuated<TokenReference<S>, S>,
-        expr_list: Punctuated<Expression<S>, S>,
+        expr_list: Punctuated<Expression<S, B, U, R>, S>,
     ) -> Self {
         Self {
             for_token: TokenReference::basic_symbol("for "),
@@ -823,7 +793,7 @@ impl<S: AnySymbol> GenericFor<S> {
 
     /// Returns the punctuated sequence of the expressions looped over
     /// In `for index, value in pairs(list) do`, iterates over `pairs(list)`
-    pub fn expressions(&self) -> &Punctuated<Expression<S>, S> {
+    pub fn expressions(&self) -> &Punctuated<Expression<S, B, U, R>, S> {
         &self.expr_list
     }
 
@@ -833,7 +803,7 @@ impl<S: AnySymbol> GenericFor<S> {
     }
 
     /// The code inside the for loop
-    pub fn block(&self) -> &Block<S> {
+    pub fn block(&self) -> &Block<S, B, U, R> {
         &self.block
     }
 
@@ -867,7 +837,7 @@ impl<S: AnySymbol> GenericFor<S> {
     }
 
     /// Returns a new GenericFor with the given expression list
-    pub fn with_expressions(self, expr_list: Punctuated<Expression<S>, S>) -> Self {
+    pub fn with_expressions(self, expr_list: Punctuated<Expression<S, B, U, R>, S>) -> Self {
         Self { expr_list, ..self }
     }
 
@@ -877,7 +847,7 @@ impl<S: AnySymbol> GenericFor<S> {
     }
 
     /// Returns a new GenericFor with the given block
-    pub fn with_block(self, block: Block<S>) -> Self {
+    pub fn with_block(self, block: Block<S, B, U, R>) -> Self {
         Self { block, ..self }
     }
 
@@ -897,7 +867,9 @@ impl<S: AnySymbol> GenericFor<S> {
     }
 }
 
-impl<S: AnySymbol> fmt::Display for GenericFor<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> fmt::Display
+    for GenericFor<S, B, U, R>
+{
     #[cfg(feature = "luau")]
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(
@@ -944,21 +916,21 @@ impl<S: AnySymbol> fmt::Display for GenericFor<S> {
     "display_option(r#else)",
     "end_token"
 )]
-pub struct If<S: AnySymbol> {
+pub struct If<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     if_token: TokenReference<S>,
-    condition: Expression<S>,
+    condition: Expression<S, B, U, R>,
     then_token: TokenReference<S>,
-    block: Block<S>,
-    else_if: Option<Vec<ElseIf<S>>>,
+    block: Block<S, B, U, R>,
+    else_if: Option<Vec<ElseIf<S, B, U, R>>>,
     else_token: Option<TokenReference<S>>,
     #[cfg_attr(feature = "serde", serde(rename = "else"))]
-    r#else: Option<Block<S>>,
+    r#else: Option<Block<S, B, U, R>>,
     end_token: TokenReference<S>,
 }
 
-impl<S: AnySymbol> If<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> If<S, B, U, R> {
     /// Creates a new If from the given condition
-    pub fn new(condition: Expression<S>) -> Self {
+    pub fn new(condition: Expression<S, B, U, R>) -> Self {
         Self {
             if_token: TokenReference::basic_symbol("if "),
             condition,
@@ -977,7 +949,7 @@ impl<S: AnySymbol> If<S> {
     }
 
     /// The condition of the if statement, `condition` in `if condition then`
-    pub fn condition(&self) -> &Expression<S> {
+    pub fn condition(&self) -> &Expression<S, B, U, R> {
         &self.condition
     }
 
@@ -987,7 +959,7 @@ impl<S: AnySymbol> If<S> {
     }
 
     /// The block inside the initial if statement
-    pub fn block(&self) -> &Block<S> {
+    pub fn block(&self) -> &Block<S, B, U, R> {
         &self.block
     }
 
@@ -999,12 +971,12 @@ impl<S: AnySymbol> If<S> {
     /// If there are `elseif` conditions, returns a vector of them
     /// Expression is the condition, block is the code if the condition is true
     // TODO: Make this return an iterator, and remove Option part entirely?
-    pub fn else_if(&self) -> Option<&Vec<ElseIf<S>>> {
+    pub fn else_if(&self) -> Option<&Vec<ElseIf<S, B, U, R>>> {
         self.else_if.as_ref()
     }
 
     /// The code inside an `else` block if one exists
-    pub fn else_block(&self) -> Option<&Block<S>> {
+    pub fn else_block(&self) -> Option<&Block<S, B, U, R>> {
         self.r#else.as_ref()
     }
 
@@ -1019,7 +991,7 @@ impl<S: AnySymbol> If<S> {
     }
 
     /// Returns a new If with the given condition
-    pub fn with_condition(self, condition: Expression<S>) -> Self {
+    pub fn with_condition(self, condition: Expression<S, B, U, R>) -> Self {
         Self { condition, ..self }
     }
 
@@ -1029,12 +1001,12 @@ impl<S: AnySymbol> If<S> {
     }
 
     /// Returns a new If with the given block
-    pub fn with_block(self, block: Block<S>) -> Self {
+    pub fn with_block(self, block: Block<S, B, U, R>) -> Self {
         Self { block, ..self }
     }
 
     /// Returns a new If with the given list of `elseif` blocks
-    pub fn with_else_if(self, else_if: Option<Vec<ElseIf<S>>>) -> Self {
+    pub fn with_else_if(self, else_if: Option<Vec<ElseIf<S, B, U, R>>>) -> Self {
         Self { else_if, ..self }
     }
 
@@ -1044,7 +1016,7 @@ impl<S: AnySymbol> If<S> {
     }
 
     /// Returns a new If with the given `else` body
-    pub fn with_else(self, r#else: Option<Block<S>>) -> Self {
+    pub fn with_else(self, r#else: Option<Block<S, B, U, R>>) -> Self {
         Self { r#else, ..self }
     }
 
@@ -1059,16 +1031,16 @@ impl<S: AnySymbol> If<S> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[display(fmt = "{else_if_token}{condition}{then_token}{block}")]
-pub struct ElseIf<S: AnySymbol> {
+pub struct ElseIf<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     else_if_token: TokenReference<S>,
-    condition: Expression<S>,
+    condition: Expression<S, B, U, R>,
     then_token: TokenReference<S>,
-    block: Block<S>,
+    block: Block<S, B, U, R>,
 }
 
-impl<S: AnySymbol> ElseIf<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> ElseIf<S, B, U, R> {
     /// Creates a new ElseIf from the given condition
-    pub fn new(condition: Expression<S>) -> Self {
+    pub fn new(condition: Expression<S, B, U, R>) -> Self {
         Self {
             else_if_token: TokenReference::basic_symbol("elseif "),
             condition,
@@ -1083,7 +1055,7 @@ impl<S: AnySymbol> ElseIf<S> {
     }
 
     /// The condition of the `elseif`, `condition` in `elseif condition then`
-    pub fn condition(&self) -> &Expression<S> {
+    pub fn condition(&self) -> &Expression<S, B, U, R> {
         &self.condition
     }
 
@@ -1093,7 +1065,7 @@ impl<S: AnySymbol> ElseIf<S> {
     }
 
     /// The body of the `elseif`
-    pub fn block(&self) -> &Block<S> {
+    pub fn block(&self) -> &Block<S, B, U, R> {
         &self.block
     }
 
@@ -1106,7 +1078,7 @@ impl<S: AnySymbol> ElseIf<S> {
     }
 
     /// Returns a new ElseIf with the given condition
-    pub fn with_condition(self, condition: Expression<S>) -> Self {
+    pub fn with_condition(self, condition: Expression<S, B, U, R>) -> Self {
         Self { condition, ..self }
     }
 
@@ -1116,7 +1088,7 @@ impl<S: AnySymbol> ElseIf<S> {
     }
 
     /// Returns a new ElseIf with the given block
-    pub fn with_block(self, block: Block<S>) -> Self {
+    pub fn with_block(self, block: Block<S, B, U, R>) -> Self {
         Self { block, ..self }
     }
 }
@@ -1126,17 +1098,17 @@ impl<S: AnySymbol> ElseIf<S> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[display(fmt = "{while_token}{condition}{do_token}{block}{end_token}")]
-pub struct While<S: AnySymbol> {
+pub struct While<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     while_token: TokenReference<S>,
-    condition: Expression<S>,
+    condition: Expression<S, B, U, R>,
     do_token: TokenReference<S>,
-    block: Block<S>,
+    block: Block<S, B, U, R>,
     end_token: TokenReference<S>,
 }
 
-impl<S: AnySymbol> While<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> While<S, B, U, R> {
     /// Creates a new While from the given condition
-    pub fn new(condition: Expression<S>) -> Self {
+    pub fn new(condition: Expression<S, B, U, R>) -> Self {
         Self {
             while_token: TokenReference::basic_symbol("while "),
             condition,
@@ -1152,7 +1124,7 @@ impl<S: AnySymbol> While<S> {
     }
 
     /// The `condition` part of `while condition do`
-    pub fn condition(&self) -> &Expression<S> {
+    pub fn condition(&self) -> &Expression<S, B, U, R> {
         &self.condition
     }
 
@@ -1162,7 +1134,7 @@ impl<S: AnySymbol> While<S> {
     }
 
     /// The code inside the while loop
-    pub fn block(&self) -> &Block<S> {
+    pub fn block(&self) -> &Block<S, B, U, R> {
         &self.block
     }
 
@@ -1180,7 +1152,7 @@ impl<S: AnySymbol> While<S> {
     }
 
     /// Returns a new While with the given condition
-    pub fn with_condition(self, condition: Expression<S>) -> Self {
+    pub fn with_condition(self, condition: Expression<S, B, U, R>) -> Self {
         Self { condition, ..self }
     }
 
@@ -1190,7 +1162,7 @@ impl<S: AnySymbol> While<S> {
     }
 
     /// Returns a new While with the given block
-    pub fn with_block(self, block: Block<S>) -> Self {
+    pub fn with_block(self, block: Block<S, B, U, R>) -> Self {
         Self { block, ..self }
     }
 
@@ -1205,16 +1177,16 @@ impl<S: AnySymbol> While<S> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[display(fmt = "{repeat_token}{block}{until_token}{until}")]
-pub struct Repeat<S: AnySymbol> {
+pub struct Repeat<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     repeat_token: TokenReference<S>,
-    block: Block<S>,
+    block: Block<S, B, U, R>,
     until_token: TokenReference<S>,
-    until: Expression<S>,
+    until: Expression<S, B, U, R>,
 }
 
-impl<S: AnySymbol> Repeat<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> Repeat<S, B, U, R> {
     /// Creates a new Repeat from the given expression to repeat until
-    pub fn new(until: Expression<S>) -> Self {
+    pub fn new(until: Expression<S, B, U, R>) -> Self {
         Self {
             repeat_token: TokenReference::basic_symbol("repeat\n"),
             block: Block::new(),
@@ -1229,7 +1201,7 @@ impl<S: AnySymbol> Repeat<S> {
     }
 
     /// The code inside the `repeat` block
-    pub fn block(&self) -> &Block<S> {
+    pub fn block(&self) -> &Block<S, B, U, R> {
         &self.block
     }
 
@@ -1239,7 +1211,7 @@ impl<S: AnySymbol> Repeat<S> {
     }
 
     /// The condition for the `until` part
-    pub fn until(&self) -> &Expression<S> {
+    pub fn until(&self) -> &Expression<S, B, U, R> {
         &self.until
     }
 
@@ -1252,7 +1224,7 @@ impl<S: AnySymbol> Repeat<S> {
     }
 
     /// Returns a new Repeat with the given block
-    pub fn with_block(self, block: Block<S>) -> Self {
+    pub fn with_block(self, block: Block<S, B, U, R>) -> Self {
         Self { block, ..self }
     }
 
@@ -1265,7 +1237,7 @@ impl<S: AnySymbol> Repeat<S> {
     }
 
     /// Returns a new Repeat with the given `until` block
-    pub fn with_until(self, until: Expression<S>) -> Self {
+    pub fn with_until(self, until: Expression<S, B, U, R>) -> Self {
         Self { until, ..self }
     }
 }
@@ -1275,15 +1247,15 @@ impl<S: AnySymbol> Repeat<S> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[display(fmt = "{colon_token}{name}{args}")]
-pub struct MethodCall<S: AnySymbol> {
+pub struct MethodCall<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     colon_token: TokenReference<S>,
     name: TokenReference<S>,
-    args: FunctionArgs<S>,
+    args: FunctionArgs<S, B, U, R>,
 }
 
-impl<S: AnySymbol> MethodCall<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> MethodCall<S, B, U, R> {
     /// Returns a new MethodCall from the given name and args
-    pub fn new(name: TokenReference<S>, args: FunctionArgs<S>) -> Self {
+    pub fn new(name: TokenReference<S>, args: FunctionArgs<S, B, U, R>) -> Self {
         Self {
             colon_token: TokenReference::basic_symbol(":"),
             name,
@@ -1297,7 +1269,7 @@ impl<S: AnySymbol> MethodCall<S> {
     }
 
     /// The arguments of a method call, the `x, y, z` part of `method:call(x, y, z)`
-    pub fn args(&self) -> &FunctionArgs<S> {
+    pub fn args(&self) -> &FunctionArgs<S, B, U, R> {
         &self.args
     }
 
@@ -1320,7 +1292,7 @@ impl<S: AnySymbol> MethodCall<S> {
     }
 
     /// Returns a new MethodCall with the given args
-    pub fn with_args(self, args: FunctionArgs<S>) -> Self {
+    pub fn with_args(self, args: FunctionArgs<S, B, U, R>) -> Self {
         Self { args, ..self }
     }
 }
@@ -1330,20 +1302,20 @@ impl<S: AnySymbol> MethodCall<S> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[non_exhaustive]
-pub enum Call<S: AnySymbol> {
+pub enum Call<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     #[display(fmt = "{_0}")]
     /// A function being called directly, such as `x(1)`
-    AnonymousCall(FunctionArgs<S>),
+    AnonymousCall(FunctionArgs<S, B, U, R>),
     #[display(fmt = "{_0}")]
     /// A method call, such as `x:y()`
-    MethodCall(MethodCall<S>),
+    MethodCall(MethodCall<S, B, U, R>),
 }
 
 /// A function body, everything except `function x` in `function x(a, b, c) call() end`
 // #[derive(Clone, Debug, PartialEq, Node)]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct FunctionBody<S: AnySymbol> {
+pub struct FunctionBody<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     #[cfg(feature = "luau")]
     generics: Option<GenericDeclaration>,
 
@@ -1357,11 +1329,11 @@ pub struct FunctionBody<S: AnySymbol> {
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     return_type: Option<TypeSpecifier>,
 
-    block: Block<S>,
+    block: Block<S, B, U, R>,
     end_token: TokenReference<S>,
 }
 
-impl<S: AnySymbol> FunctionBody<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> FunctionBody<S, B, U, R> {
     /// Returns a new empty FunctionBody
     pub fn new() -> Self {
         Self {
@@ -1396,7 +1368,7 @@ impl<S: AnySymbol> FunctionBody<S> {
     }
 
     /// The code of a function body
-    pub fn block(&self) -> &Block<S> {
+    pub fn block(&self) -> &Block<S, B, U, R> {
         &self.block
     }
 
@@ -1467,7 +1439,7 @@ impl<S: AnySymbol> FunctionBody<S> {
     }
 
     /// Returns a new FunctionBody with the given block
-    pub fn with_block(self, block: Block<S>) -> Self {
+    pub fn with_block(self, block: Block<S, B, U, R>) -> Self {
         Self { block, ..self }
     }
 
@@ -1477,13 +1449,17 @@ impl<S: AnySymbol> FunctionBody<S> {
     }
 }
 
-impl<S: AnySymbol> Default for FunctionBody<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> Default
+    for FunctionBody<S, B, U, R>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<S: AnySymbol> fmt::Display for FunctionBody<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> fmt::Display
+    for FunctionBody<S, B, U, R>
+{
     #[cfg(feature = "luau")]
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(
@@ -1531,13 +1507,13 @@ pub enum Parameter<S: AnySymbol> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[non_exhaustive]
-pub enum Suffix<S: AnySymbol> {
+pub enum Suffix<S: AnySymbol, B: BinOp<S>, U: BinOp<S>, R: Return<S, B, U>> {
     #[display(fmt = "{_0}")]
     /// A call, including method calls and direct calls
-    Call(Call<S>),
+    Call(Call<S, B, U, R>),
     #[display(fmt = "{_0}")]
     /// An index, such as `x.y`
-    Index(Index<S>),
+    Index(Index<S, B, U, R>),
 }
 
 /// A complex expression used by [`Var`], consisting of both a prefix and suffixes
@@ -1545,14 +1521,14 @@ pub enum Suffix<S: AnySymbol> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[display(fmt = "{}{}", "prefix", "join_vec(suffixes)")]
-pub struct VarExpression<S: AnySymbol> {
-    prefix: Prefix<S>,
-    suffixes: Vec<Suffix<S>>,
+pub struct VarExpression<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
+    prefix: Prefix<S, B, U, R>,
+    suffixes: Vec<Suffix<S, B, U, R>>,
 }
 
-impl<S: AnySymbol> VarExpression<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> VarExpression<S, B, U, R> {
     /// Returns a new VarExpression from the given prefix
-    pub fn new(prefix: Prefix<S>) -> Self {
+    pub fn new(prefix: Prefix<S, B, U, R>) -> Self {
         Self {
             prefix,
             suffixes: Vec::new(),
@@ -1560,22 +1536,22 @@ impl<S: AnySymbol> VarExpression<S> {
     }
 
     /// The prefix of the expression, such as a name
-    pub fn prefix(&self) -> &Prefix<S> {
+    pub fn prefix(&self) -> &Prefix<S, B, U, R> {
         &self.prefix
     }
 
     /// An iter over the suffixes, such as indexing or calling
-    pub fn suffixes(&self) -> impl Iterator<Item = &Suffix<S>> {
+    pub fn suffixes(&self) -> impl Iterator<Item = &Suffix<S, B, U, R>> {
         self.suffixes.iter()
     }
 
     /// Returns a new VarExpression with the given prefix
-    pub fn with_prefix(self, prefix: Prefix<S>) -> Self {
+    pub fn with_prefix(self, prefix: Prefix<S, B, U, R>) -> Self {
         Self { prefix, ..self }
     }
 
     /// Returns a new VarExpression with the given suffixes
-    pub fn with_suffixes(self, suffixes: Vec<Suffix<S>>) -> Self {
+    pub fn with_suffixes(self, suffixes: Vec<Suffix<S, B, U, R>>) -> Self {
         Self { suffixes, ..self }
     }
 }
@@ -1585,10 +1561,10 @@ impl<S: AnySymbol> VarExpression<S> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[non_exhaustive]
-pub enum Var<S: AnySymbol> {
+pub enum Var<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     /// An expression, such as `x.y.z` or `x()`
     #[display(fmt = "{_0}")]
-    Expression(Box<VarExpression<S>>),
+    Expression(Box<VarExpression<S, B, U, R>>),
     /// A literal identifier, such as `x`
     #[display(fmt = "{_0}")]
     Name(TokenReference<S>),
@@ -1599,15 +1575,18 @@ pub enum Var<S: AnySymbol> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[display(fmt = "{var_list}{equal_token}{expr_list}")]
-pub struct Assignment<S: AnySymbol> {
-    var_list: Punctuated<Var<S>, S>,
+pub struct Assignment<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
+    var_list: Punctuated<Var<S, B, U, R>, S>,
     equal_token: TokenReference<S>,
-    expr_list: Punctuated<Expression<S>, S>,
+    expr_list: Punctuated<Expression<S, B, U, R>, S>,
 }
 
-impl<S: AnySymbol> Assignment<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> Assignment<S, B, U, R> {
     /// Returns a new Assignment from the given variable and expression list
-    pub fn new(var_list: Punctuated<Var<S>, S>, expr_list: Punctuated<Expression<S>, S>) -> Self {
+    pub fn new(
+        var_list: Punctuated<Var<S, B, U, R>, S>,
+        expr_list: Punctuated<Expression<S, B, U, R>, S>,
+    ) -> Self {
         Self {
             var_list,
             equal_token: TokenReference::basic_symbol(" = "),
@@ -1617,7 +1596,7 @@ impl<S: AnySymbol> Assignment<S> {
 
     /// Returns the punctuated sequence over the expressions being assigned.
     /// This is the the `1, 2` part of `x, y["a"] = 1, 2`
-    pub fn expressions(&self) -> &Punctuated<Expression<S>, S> {
+    pub fn expressions(&self) -> &Punctuated<Expression<S, B, U, R>, S> {
         &self.expr_list
     }
 
@@ -1628,12 +1607,12 @@ impl<S: AnySymbol> Assignment<S> {
 
     /// Returns the punctuated sequence over the variables being assigned to.
     /// This is the `x, y["a"]` part of `x, y["a"] = 1, 2`
-    pub fn variables(&self) -> &Punctuated<Var<S>, S> {
+    pub fn variables(&self) -> &Punctuated<Var<S, B, U, R>, S> {
         &self.var_list
     }
 
     /// Returns a new Assignment with the given variables
-    pub fn with_variables(self, var_list: Punctuated<Var<S>, S>) -> Self {
+    pub fn with_variables(self, var_list: Punctuated<Var<S, B, U, R>, S>) -> Self {
         Self { var_list, ..self }
     }
 
@@ -1646,7 +1625,7 @@ impl<S: AnySymbol> Assignment<S> {
     }
 
     /// Returns a new Assignment with the given expressions
-    pub fn with_expressions(self, expr_list: Punctuated<Expression<S>, S>) -> Self {
+    pub fn with_expressions(self, expr_list: Punctuated<Expression<S, B, U, R>, S>) -> Self {
         Self { expr_list, ..self }
     }
 }
@@ -1663,14 +1642,14 @@ impl<S: AnySymbol> Assignment<S> {
     feature = "luau",
     display(fmt = "{local_token}{function_token}{name}{body}")
 )]
-pub struct LocalFunction<S: AnySymbol> {
+pub struct LocalFunction<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     local_token: TokenReference<S>,
     function_token: TokenReference<S>,
     name: TokenReference<S>,
-    body: FunctionBody<S>,
+    body: FunctionBody<S, B, U, R>,
 }
 
-impl<S: AnySymbol> LocalFunction<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> LocalFunction<S, B, U, R> {
     /// Returns a new LocalFunction from the given name
     pub fn new(name: TokenReference<S>) -> Self {
         LocalFunction {
@@ -1692,7 +1671,7 @@ impl<S: AnySymbol> LocalFunction<S> {
     }
 
     /// The function body, everything except `local function x` in `local function x(a, b, c) call() end`
-    pub fn body(&self) -> &FunctionBody<S> {
+    pub fn body(&self) -> &FunctionBody<S, B, U, R> {
         &self.body
     }
 
@@ -1723,7 +1702,7 @@ impl<S: AnySymbol> LocalFunction<S> {
     }
 
     /// Returns a new LocalFunction with the given function body
-    pub fn with_body(self, body: FunctionBody<S>) -> Self {
+    pub fn with_body(self, body: FunctionBody<S, B, U, R>) -> Self {
         Self { body, ..self }
     }
 }
@@ -1732,7 +1711,7 @@ impl<S: AnySymbol> LocalFunction<S> {
 // #[derive(Clone, Debug, PartialEq, Node)]
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-pub struct LocalAssignment<S: AnySymbol> {
+pub struct LocalAssignment<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     local_token: TokenReference<S>,
     #[cfg(feature = "luau")]
     #[cfg_attr(
@@ -1748,10 +1727,10 @@ pub struct LocalAssignment<S: AnySymbol> {
     )]
     attributes: Vec<Option<Attribute>>,
     equal_token: Option<TokenReference<S>>,
-    expr_list: Punctuated<Expression<S>, S>,
+    expr_list: Punctuated<Expression<S, B, U, R>, S>,
 }
 
-impl<S: AnySymbol> LocalAssignment<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> LocalAssignment<S, B, U, R> {
     /// Returns a new LocalAssignment from the given name list
     pub fn new(name_list: Punctuated<TokenReference<S>, S>) -> Self {
         Self {
@@ -1778,7 +1757,7 @@ impl<S: AnySymbol> LocalAssignment<S> {
 
     /// Returns the punctuated sequence of the expressions being assigned.
     /// This is the `1, 2` part of `local x, y = 1, 2`
-    pub fn expressions(&self) -> &Punctuated<Expression<S>, S> {
+    pub fn expressions(&self) -> &Punctuated<Expression<S, B, U, R>, S> {
         &self.expr_list
     }
 
@@ -1843,12 +1822,14 @@ impl<S: AnySymbol> LocalAssignment<S> {
     }
 
     /// Returns a new LocalAssignment with the given expression list
-    pub fn with_expressions(self, expr_list: Punctuated<Expression<S>, S>) -> Self {
+    pub fn with_expressions(self, expr_list: Punctuated<Expression<S, B, U, R>, S>) -> Self {
         Self { expr_list, ..self }
     }
 }
 
-impl<S: AnySymbol> fmt::Display for LocalAssignment<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> fmt::Display
+    for LocalAssignment<S, B, U, R>
+{
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         #[cfg(feature = "lua54")]
         let attributes = self.attributes().chain(std::iter::repeat(None));
@@ -1876,13 +1857,13 @@ impl<S: AnySymbol> fmt::Display for LocalAssignment<S> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[display(fmt = "{do_token}{block}{end_token}")]
-pub struct Do<S: AnySymbol> {
+pub struct Do<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     do_token: TokenReference<S>,
-    block: Block<S>,
+    block: Block<S, B, U, R>,
     end_token: TokenReference<S>,
 }
 
-impl<S: AnySymbol> Do<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> Do<S, B, U, R> {
     /// Creates an empty Do
     pub fn new() -> Self {
         Self {
@@ -1898,7 +1879,7 @@ impl<S: AnySymbol> Do<S> {
     }
 
     /// The code inside the `do ... end`
-    pub fn block(&self) -> &Block<S> {
+    pub fn block(&self) -> &Block<S, B, U, R> {
         &self.block
     }
 
@@ -1913,7 +1894,7 @@ impl<S: AnySymbol> Do<S> {
     }
 
     /// Returns a new Do with the given block
-    pub fn with_block(self, block: Block<S>) -> Self {
+    pub fn with_block(self, block: Block<S, B, U, R>) -> Self {
         Self { block, ..self }
     }
 
@@ -1923,7 +1904,7 @@ impl<S: AnySymbol> Do<S> {
     }
 }
 
-impl<S: AnySymbol> Default for Do<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> Default for Do<S, B, U, R> {
     fn default() -> Self {
         Self::new()
     }
@@ -1934,15 +1915,15 @@ impl<S: AnySymbol> Default for Do<S> {
 #[derive(Clone, Debug, Display, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[display(fmt = "{}{}", "prefix", "join_vec(suffixes)")]
-pub struct FunctionCall<S: AnySymbol> {
-    prefix: Prefix<S>,
-    suffixes: Vec<Suffix<S>>,
+pub struct FunctionCall<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
+    prefix: Prefix<S, B, U, R>,
+    suffixes: Vec<Suffix<S, B, U, R>>,
 }
 
-impl<S: AnySymbol> FunctionCall<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> FunctionCall<S, B, U, R> {
     /// Creates a new FunctionCall from the given prefix
     /// Sets the suffixes such that the return is `prefixes()`
-    pub fn new(prefix: Prefix<S>) -> Self {
+    pub fn new(prefix: Prefix<S, B, U, R>) -> Self {
         FunctionCall {
             prefix,
             suffixes: vec![Suffix::Call(Call::AnonymousCall(
@@ -1958,22 +1939,22 @@ impl<S: AnySymbol> FunctionCall<S> {
     }
 
     /// The prefix of a function call, the `call` part of `call()`
-    pub fn prefix(&self) -> &Prefix<S> {
+    pub fn prefix(&self) -> &Prefix<S, B, U, R> {
         &self.prefix
     }
 
     /// The suffix of a function call, the `()` part of `call()`
-    pub fn suffixes(&self) -> impl Iterator<Item = &Suffix<S>> {
+    pub fn suffixes(&self) -> impl Iterator<Item = &Suffix<S, B, U, R>> {
         self.suffixes.iter()
     }
 
     /// Returns a new FunctionCall with the given prefix
-    pub fn with_prefix(self, prefix: Prefix<S>) -> Self {
+    pub fn with_prefix(self, prefix: Prefix<S, B, U, R>) -> Self {
         Self { prefix, ..self }
     }
 
     /// Returns a new FunctionCall with the given suffixes
-    pub fn with_suffixes(self, suffixes: Vec<Suffix<S>>) -> Self {
+    pub fn with_suffixes(self, suffixes: Vec<Suffix<S, B, U, R>>) -> Self {
         Self { suffixes, ..self }
     }
 }
@@ -2040,13 +2021,13 @@ impl<S: AnySymbol> FunctionName<S> {
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[cfg_attr(not(feature = "luau"), display(fmt = "{function_token}{name}{body}"))]
 #[cfg_attr(feature = "luau", display(fmt = "{function_token}{name}{body}"))]
-pub struct FunctionDeclaration<S: AnySymbol> {
+pub struct FunctionDeclaration<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> {
     function_token: TokenReference<S>,
     name: FunctionName<S>,
-    body: FunctionBody<S>,
+    body: FunctionBody<S, B, U, R>,
 }
 
-impl<S: AnySymbol> FunctionDeclaration<S> {
+impl<S: AnySymbol, B: BinOp<S>, U: UnOp<S>, R: Return<S, B, U>> FunctionDeclaration<S, B, U, R> {
     /// Creates a new FunctionDeclaration from the given name
     pub fn new(name: FunctionName<S>) -> Self {
         Self {
@@ -2062,7 +2043,7 @@ impl<S: AnySymbol> FunctionDeclaration<S> {
     }
 
     /// The body of the function
-    pub fn body(&self) -> &FunctionBody<S> {
+    pub fn body(&self) -> &FunctionBody<S, B, U, R> {
         &self.body
     }
 
@@ -2085,98 +2066,26 @@ impl<S: AnySymbol> FunctionDeclaration<S> {
     }
 
     /// Returns a new FunctionDeclaration with the given function body
-    pub fn with_body(self, body: FunctionBody<S>) -> Self {
+    pub fn with_body(self, body: FunctionBody<S, B, U, R>) -> Self {
         Self { body, ..self }
     }
 }
 
-crate::make_bin_op!(
-    #[doc = "Operators that require two operands, such as X + Y or X - Y"]
-    // #[visit(skip_visit_self)]
-    {
-        Caret = 12,
+/// Operators that require just one operand, such as #X
+pub trait UnOp<S> {
+    /// The token associated with the operator
+    fn token(&self) -> &TokenReference<S>;
+}
 
-        Percent = 10,
-        Slash = 10,
-        Star = 10,
-        [luau | lua53] DoubleSlash = 10,
-
-        Minus = 9,
-        Plus = 9,
-
-        TwoDots = 8,
-        [lua53] DoubleLessThan = 7,
-        [lua53] DoubleGreaterThan = 7,
-
-        [lua53] Ampersand = 6,
-
-        [lua53] Tilde = 5,
-
-        [lua53] Pipe = 4,
-
-        GreaterThan = 3,
-        GreaterThanEqual = 3,
-        LessThan = 3,
-        LessThanEqual = 3,
-        TildeEqual = 3,
-        TwoEqual = 3,
-
-        And = 2,
-
-        Or = 1,
-    }
-);
-
-impl<S: AnySymbol> BinOp<S> {
+pub trait BinOp<S> {
     /// The precedence of the operator. The larger the number, the higher the precedence.
     /// See more at <http://www.lua.org/manual/5.1/manual.html#2.5.6>
-    pub fn precedence(&self) -> u8 {
-        BinOp::precedence_of_token(self.token()).expect("invalid token")
-    }
-
+    fn precedence(&self) -> u8;
     /// Whether the operator is right associative. If not, it is left associative.
     /// See more at <https://www.lua.org/pil/3.5.html>
-    pub fn is_right_associative(&self) -> bool {
-        matches!(*self, BinOp::Caret(_) | BinOp::TwoDots(_))
-    }
-
+    fn is_right_associative(&self) -> bool;
     /// Given a token, returns whether it is a right associative binary operator.
-    pub fn is_right_associative_token(token: &TokenReference<S>) -> bool {
-        matches!(
-            token.token_type(),
-            TokenType::Symbol {
-                symbol: Symbol::Caret
-            } | TokenType::Symbol {
-                symbol: Symbol::TwoDots
-            }
-        )
-    }
-}
-
-/// Operators that require just one operand, such as #X
-// #[derive(Clone, Debug, Display, PartialEq, Eq, Node, Visit)]
-#[derive(Clone, Debug, Display, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
-#[allow(missing_docs)]
-#[non_exhaustive]
-#[display(fmt = "{}")]
-pub enum UnOp<S: AnySymbol> {
-    Minus(TokenReference<S>),
-    Not(TokenReference<S>),
-    Hash(TokenReference<S>),
-    #[cfg(feature = "lua53")]
-    Tilde(TokenReference<S>),
-}
-
-impl<S: AnySymbol> UnOp<S> {
-    /// The token associated with the operator
-    pub fn token(&self) -> &TokenReference<S> {
-        match self {
-            UnOp::Minus(token) | UnOp::Not(token) | UnOp::Hash(token) => token,
-            #[cfg(feature = "lua53")]
-            UnOp::Tilde(token) => token,
-        }
-    }
+    fn is_right_associative_token(token: &TokenReference<S>) -> bool;
 }
 
 /// An error that occurs when creating the AST.

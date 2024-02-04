@@ -11,7 +11,7 @@ macro_rules! make_bin_op {
             #[non_exhaustive]
             $(#[$outer])*
             #[display(fmt = "{}")]
-            pub enum BinOp<S: AnySymbol> {
+            pub enum BinOp {
                 $(
                     #[allow(missing_docs)]
                     $(
@@ -19,13 +19,13 @@ macro_rules! make_bin_op {
                             $(feature = "" $version),+
                         ))]
                     )*
-                    $operator(TokenReference<S>),
+                    $operator(TokenReference<Symbol>),
                 )+
             }
 
-            impl<S: AnySymbol> BinOp<S> {
+            impl BinOp {
                 /// The precedence of the operator, from a scale of 1 to 10. The larger the number, the higher the precedence.
-                pub fn precedence_of_token(token: &TokenReference<S>) -> Option<u8> {
+                pub fn precedence_of_token(token: &TokenReference<Symbol>) -> Option<u8> {
                     match token.token_type() {
                         TokenType::Symbol { symbol } => match symbol {
                             $(
@@ -45,7 +45,7 @@ macro_rules! make_bin_op {
                 }
 
                 /// The token associated with this operator
-                pub fn token(&self) -> &TokenReference<S> {
+                pub fn token(&self) -> &TokenReference<Symbol> {
                     match self {
                         $(
                             $(
@@ -58,7 +58,7 @@ macro_rules! make_bin_op {
                     }
                 }
 
-                pub(crate) fn consume<L: Language<S>>(state: &mut parser_structs::ParserState<S, L>) -> Option<Self> {
+                pub(crate) fn consume<L: Language<Symbol>>(state: &mut parser_structs::ParserState<Symbol, L>) -> Option<Self> {
                     match state.current().unwrap().token_type() {
                         TokenType::Symbol { symbol } => match symbol {
                             $(

@@ -366,7 +366,7 @@ impl<S: AnySymbol> TokenReference<S> {
     //     TokenReference::symbol_specific_lua_version(text, LuaVersion::new())
     // }
 
-    pub(crate) fn basic_symbol<L: Language<S>>(text: &str) -> Self {
+    pub fn basic_symbol<L: Language<S>>(text: &str) -> Self {
         TokenReference::symbol_specific_lua_version::<L>(text).unwrap()
     }
 
